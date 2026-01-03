@@ -1,0 +1,39 @@
+{
+  "name": "PakizeyeYasMama",
+  "main": "main.js",
+  "packageName": "com.bora.aimessagingautomation",
+  "versionName": "1.0.0",
+  "versionCode": 1,
+  "assets": [],
+  "encryptLevel": 0,
+  "useFeatures": [],
+  "launchConfig": {
+    "displaySplash": false,
+    "hideLogs": false,
+    "splashText": "",
+    "stableMode": false
+  },
+  "permissionConfig": {
+    "manifestPermissions": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.WAKE_LOCK",
+      "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+      "android.permission.ACCESS_NOTIFICATION_POLICY",
+      "android.permission.WRITE_SETTINGS",
+      "android.permission.READ_PHONE_STATE",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "android.permission.MANAGE_EXTERNAL_STORAGE"
+    ],
+    "requestListOnStartup": [
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+      "android.permission.ACCESS_NOTIFICATION_POLICY",
+      "android.permission.READ_EXTERNAL_STORAGE",
+      "android.permission.WRITE_EXTERNAL_STORAGE",
+      "android.permission.MANAGE_EXTERNAL_STORAGE"
+    ]
+  }
+}
