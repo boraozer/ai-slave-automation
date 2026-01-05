@@ -24,7 +24,11 @@
       "android.permission.READ_PHONE_STATE",
       "android.permission.READ_EXTERNAL_STORAGE",
       "android.permission.WRITE_EXTERNAL_STORAGE",
-      "android.permission.MANAGE_EXTERNAL_STORAGE"
+      "android.permission.MANAGE_EXTERNAL_STORAGE",
+      "android.permission.RECEIVE_BOOT_COMPLETED",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.VIBRATE"
     ],
     "requestListOnStartup": [
       "android.permission.INTERNET",
@@ -33,7 +37,8 @@
       "android.permission.ACCESS_NOTIFICATION_POLICY",
       "android.permission.READ_EXTERNAL_STORAGE",
       "android.permission.WRITE_EXTERNAL_STORAGE",
-      "android.permission.MANAGE_EXTERNAL_STORAGE"
+      "android.permission.MANAGE_EXTERNAL_STORAGE",
+      "android.permission.POST_NOTIFICATIONS"
     ]
   }
 }

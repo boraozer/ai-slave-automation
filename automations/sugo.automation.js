@@ -206,67 +206,6 @@ function answerMessage(payload, attempt) {
     const chatFuture = startChatAsync(messages, key);
     perf.step("API isteği başlatıldı");
 
-    // 1) Uygulama gerçekten foreground'a geldi mi?
-    var launched = launch(pkg)
-    perf.step("launch() çağrıldı");
-    if(!launched) {
-        perf.end("FAIL: launch");
-        try { chatFuture.cancel(); } catch (e0) {}
-        return false;
-    }
-    if (!UIUtils.waitForText("Ana sayfa", 6000)) {
-        // Artık app foreground kalacak: HOME'a basmak yerine in-app recovery dene
-        try { UIUtils.goBack(3); } catch (e1) {}
-        if (!UIUtils.waitForText("Ana sayfa", 2500)) {
-            perf.end("FAIL: Ana sayfa bulunamadı");
-            try { chatFuture.cancel(); } catch (e2) {}
-            return false;
-        }
-    }
-
-    perf.step("Ana sayfa hazır");
-
-    sleep(450)
-    UIUtils.runSecurityRules(StepRules)
-    // 2) Mesajlar/list ekranında olduğumuzu kanıtla
-    UIUtils.clickMessagesButton({
-      label: 'Mesajlar', 
-      timeoutMs: 2000
-    })
-    UIUtils.tap(messages_page_btn.x,messages_page_btn.y, 400)
-    perf.step("Mesajlar sayfasına geçildi");
-    log('Şu kişinin chat ekranına gitmeliyiz >>>', nickname)
-    quickSwipeDown5()
-    // 3) Chat'i aç (scroll açık: ekranda değilse listede bulabilsin)
-    var opened = UIUtils.openChatExactByNick(nickname, pkg);
-    perf.step("Chat açma denendi");
-    if (!opened.status) {
-        perf.end("FAIL: chat açılamadı");
-        log("[FAIL] Chat bulunamadı / açılamadı:", nickname);
-        try { chatFuture.cancel(); } catch (e6) {}
-        return false;
-    }
-    const cachedRule = UIUtils.runSecurityRules(StepRules)
-    perf.step("Security rules kontrol edildi");
-    if(cachedRule){
-        perf.end("Yeniden dene: popup yakalandı");
-        try { chatFuture.cancel(); } catch (e7) {}
-      perf.step("Sohbet sekmesi (varsa) tıklandı");
-        if (attempt >= 2) {
-            perf.end("GIVEUP: popup loop");
-            try { chatFuture.cancel(); } catch (e0) {}
-            return false;
-        }
-        sleep(600);
-        return answerMessage(payload, attempt + 1)
-    }
-
-    // 4) Uygulamanın chat sekmesi varsa (Sohbet gibi) güvenli şekilde tıkla (yoksa sorun değil)
-    try {
-        UIUtils.runSecurityRules(StepRules)
-    } catch (e7) {}
-    perf.step("Sohbet sekmesi (varsa) tıklandı");
-
     // 5) Mesaj yaz + gönder (koordinatlar cihazına göre zaten doğru)
     UIUtils.tap(chat_input_area.x, chat_input_area.y, 400) //input alanına tıklama
     sleep(500)

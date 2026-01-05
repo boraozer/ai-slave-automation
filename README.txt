@@ -42,3 +42,5 @@ Notlar
 
 
   dosya çekme = adb pull /sdcard/Scripts/build/PakizeyeYasMama_v1.0.0.apk ~/Desktop/
+  ip alma= adb shell ip -f inet addr show wlan0     
+  adb çek= adb shell uiautomator dump --compressed /sdcard/window_dump.xml && adb pull /sdcard/window_dump.xml .

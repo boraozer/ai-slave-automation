@@ -19,8 +19,9 @@ const { initGlobalLogger, logSafe } = require("./libs/logger.js");
 const UIUtils = require("./libs/utils.js");
 const Supabase = require("./libs/supabase.js");
 const NotificationWatcher = require("./libs/notification.js");
-const QueueWorker = require("./libs/queue.js");
+//const QueueWorker = require("./libs/queue.js");
 const sugo = require("./automations/sugo.automation.js");
+const { UnreadQueue } = require('./libs/main.queue.js');
 
 // Eski kod uyumluluğu: global logSafe
 initGlobalLogger();
@@ -75,33 +76,9 @@ var watchPkgs = Supabase.fetchWatchPackages(deviceId);
 NotificationWatcher.init(deviceId, watchPkgs);
 
 // 4) Queue worker'ı başlat
-QueueWorker.start(deviceId, handleEvent);
+//QueueWorker.start(deviceId, handleEvent);
 
 toast("Automation client başlatıldı.");
-startIdleDetector();
-
-function startIdleDetector() {
-  try {
-    if (idleTimer) clearInterval(idleTimer);
-    idleTimer = setInterval(() => {
-      var idleFor = Date.now() - lastEvent;
-      if (idleFor >= IDLE_MS && !idleNotified) {
-        // "restart_app" event'i üret
-        try { Supabase.insertIdleEvent(deviceId, "com.fiya.android-restart_idle"); } catch (e0) {}
-        idleNotified = true;
-        logSafe("IDLE: uzun süre event gelmedi. idleFor(ms)=", idleFor);
-        try { toast("IDLE: uzun süre işlem yok"); } catch (e) {}
-      }
-    }, IDLE_CHECK_MS);
-  } catch (e) {
-    logSafe("Idle detector error:", e);
-  }
-}
-
-setInterval(()=> {
-  try { Supabase.insertIdleEvent(deviceId, "com.fiya.android-restart_idle"); } catch (e0) {}
-}, 1000 * 60 * 60); // Her 1 saatte bir
-
 
 function handleEvent(ev) {
   lastEvent = Date.now();
@@ -129,3 +106,33 @@ function handleEvent(ev) {
     logSafe("handleEvent error:", e);
   }
 }
+
+const {ChatMessageHelper} = require("./libs/last.chat.message.js");
+UnreadQueue
+  .init({
+    maxAttempts: 10,
+    onFound: function(result) {
+      console.log("✅ " + result.userName + " bulundu");
+      var lastMsg = ChatMessageHelper.getLastReceivedMessage();
+      if(lastMsg == null){
+        lastMsg = {isReceived:true, text: 'çok uyumlusunuz'};
+      }
+      if(!lastMsg.isReceived){
+        UnreadQueue.continueAfterHandler();
+        return
+      }
+
+      const payload = {
+        pkg: 'com.fiya.android',
+        nickname: result.userName,
+        messages : [lastMsg.text]
+      }
+      console.log(payload)
+      sugo.answerMessage(payload);
+      UnreadQueue.continueAfterHandler();
+    },
+    onMaxAttempts: function() {
+      console.log("🔄 Liste baştan taranacak");
+    }
+  })
+  .start();
