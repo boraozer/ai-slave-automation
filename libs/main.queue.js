@@ -38,7 +38,7 @@ var guard = require("./guard.js").guard;
             FIND_TIMEOUT: 500,
             MAX_ATTEMPTS: 25,
             MAX_SCROLL_TO_TOP: 10,
-            PROCESSED_USER_EXPIRY: 1000 * 9,
+            PROCESSED_USER_EXPIRY: 1000 * 12,
             MAX_PROCESSED_USERS: 150,
             MAX_RETRIES: 3,
             RETRY_DELAY: 200
