@@ -3,11 +3,16 @@
  * CHAT MESAJ HELPER (AutoJS6)
  * ============================================================================
  * 
- * Görev: Chat ekranında karşı tarafın son mesajını bul ve döndür
+ * Gorev: Chat ekraninda karsi tarafin son mesajini bul ve dondur
+ * SADECE AVATAR OLAN MESAJLARI DIKKATE AL!
  * 
- * XML yapısı:
- * - Kendi mesajlarımız: sağda, id_user_avatar_iv ile
- * - Karşı tarafın mesajları: solda, avatar sol tarafta
+ * XML yapisi:
+ * - Kendi mesajlarimiz: sagda, avatar sag tarafta (buyuk X degeri)
+ * - Karsi tarafin mesajlari: solda, avatar sol tarafta (kucuk X degeri)
+ * - Sistem mesajlari: AVATAR YOK, skip et!
+ * 
+ * Algoritma: Tum avatar olan mesajlari sondan geriye tara,
+ * avatar solda olan ilk mesaji dondur (karsi tarafin son mesaji)
  */
 
 (function() {
@@ -19,91 +24,127 @@
             MSG_CONTENT_ID: "id_chat_msg_content",
             GIFT_SUMMARY_ID: "id_chatting_gift_summary_tv",
             VOICE_TIME_ID: "id_chatting_voice_time_tv",
+            USER_AVATAR_ID: "id_user_avatar_iv"
         },
 
         /**
-         * Karşı tarafın son mesajını bul
+         * Karsi tarafin son mesajini bul
+         * Son 2 AVATAR OLAN mesajda karsi taraftan bir mesaj varsa onu kabul et
          * @returns { text, type, timestamp }
          */
         getLastReceivedMessage: function() {
             try {
-                console.log("🔧 getLastReceivedMessage() çağrıldı");
+                console.log("[*] getLastReceivedMessage() cagrildi");
 
-                // Tüm LinearLayout konteynerlerini bul (her mesaj bir LinearLayout)
+                // Tum LinearLayout konteynerlerini bul
                 var messageContainers = className("android.widget.LinearLayout")
                     .visibleToUser(true)
                     .find();
 
-                console.log("   📋 " + messageContainers.length + " mesaj konteyneri bulundu");
+                console.log("[+] " + messageContainers.length + " toplam konteyneri bulundu");
 
                 if (!messageContainers || messageContainers.length === 0) {
-                    console.log("   ⚠️  Mesaj bulunamadı");
+                    console.log("[-] Mesaj bulunamadi");
                     return null;
                 }
 
-                // Sağdan sola tara (son mesaj genelde aşağıda)
-                for (var i = messageContainers.length - 1; i >= 0; i--) {
+                // ONCE: AVATAR OLAN tum mesajlari bul
+                var messagesWithAvatar = [];
+                for (var i = 0; i < messageContainers.length; i++) {
                     var container = messageContainers[i];
-                    
                     try {
-                        var result = this._analyzeMessageContainer(container, i);
-                        if (result && result.isReceived) {
-                            console.log("   ✅ Karşı tarafın mesajı bulundu");
-                            return result;
+                        var avatars = container.find(
+                            id(this.config.APP_PACKAGE + ":id/" + this.config.USER_AVATAR_ID)
+                        );
+                        
+                        // Avatar var mi?
+                        if (avatars && avatars.length > 0) {
+                            messagesWithAvatar.push({
+                                container: container,
+                                index: i,
+                                avatarBounds: avatars[0].bounds()
+                            });
+                            console.log("   [Container " + i + "] AVATAR VAR - Ekle");
+                        } else {
+                            console.log("   [Container " + i + "] AVATAR YOK - SKIP");
                         }
                     } catch (e) {
-                        console.log("   ⚠️  Container " + i + " hatası: " + e);
+                        console.log("   [Container " + i + "] Kontrol hatasi: " + e);
                     }
                 }
 
-                console.log("   ⚠️  Karşı tarafın mesajı bulunamadı");
+                console.log("[+] Avatar olan " + messagesWithAvatar.length + " mesaj bulundu");
+
+                if (messagesWithAvatar.length === 0) {
+                    console.log("[-] Avatar olan mesaj bulunamadi");
+                    return null;
+                }
+
+                // TUM avatar olan mesajlarda sondan geriye dogru karsi tarafin mesajini ara
+                console.log("[*] " + messagesWithAvatar.length + " avatar olan mesajda araniliyor...");
+
+                for (var i = messagesWithAvatar.length - 1; i >= 0; i--) {
+                    var msgWithAvatar = messagesWithAvatar[i];
+                    
+                    try {
+                        var result = this._analyzeMessageContainer(
+                            msgWithAvatar.container, 
+                            msgWithAvatar.index,
+                            msgWithAvatar.avatarBounds
+                        );
+                        if (result && result.isReceived) {
+                            console.log("[OK] Karsi tarafin mesaji bulundu!");
+                            return result;
+                        }
+                    } catch (e) {
+                        console.log("[-] Analiz hatasi: " + e);
+                    }
+                }
+
+                console.log("[-] Avatar olan mesajlarda karsi tarafin mesaji bulunamadi");
                 return null;
 
             } catch (error) {
-                console.log("❌ getLastReceivedMessage() hatası: " + error);
+                console.log("[ERROR] getLastReceivedMessage() genel hatasi: " + error);
                 return null;
             }
         },
 
         /**
-         * Mesaj konteynerini analiz et
+         * Mesaj konteynerini analiz et (avatar zaten kontrol edilmis)
          * @private
          */
-        _analyzeMessageContainer: function(container, index) {
+        _analyzeMessageContainer: function(container, index, avatarBounds) {
             try {
-                // Avatar pozisyonunu kontrol et (sol = karşı taraf, sağ = bizim mesaj)
-                var avatars = container.find(
-                    id(this.config.APP_PACKAGE + ":id/id_user_avatar_iv")
-                );
-
-                if (!avatars || avatars.length === 0) {
-                    return null; // Avatar yok = sistem mesajı veya boş
-                }
-
-                var avatarBounds = avatars[0].bounds();
                 var containerBounds = container.bounds();
 
-                // Avatar konteynerin solunda mı? (karşı taraf)
-                // Avatar konteynerin sağında mı? (bizim mesaj)
+                // Avatar sagda mi solda mi kontrol et
                 var avatarX = avatarBounds.left;
-                var containerCenter = (containerBounds.left + containerBounds.right) / 2;
+                var containerLeft = containerBounds.left;
+                var containerRight = containerBounds.right;
+                var containerCenter = (containerLeft + containerRight) / 2;
 
                 console.log("   [Container " + index + "]");
-                console.log("      Avatar X: " + avatarX + ", Container center: " + containerCenter);
+                console.log("      Container: [" + containerLeft + "-" + containerRight + "], center=" + containerCenter);
+                console.log("      Avatar X: " + avatarX);
 
-                var isReceived = avatarX < containerCenter; // Sol tarafta = karşı taraf
-                console.log("      İsTalınan (karşı taraf): " + isReceived);
+                // Sol tarafta (kucuk X) = karsi taraf, Sag tarafta (buyuk X) = bizim mesaj
+                var isReceived = avatarX < containerCenter;
+                console.log("      IsReceived: " + isReceived);
 
                 if (!isReceived) {
-                    return null; // Bizim mesajımız, skip
+                    console.log("      --> Bizim mesaj, skip");
+                    return null;
                 }
 
-                // Mesaj içeriğini bul
+                console.log("      --> Karsi tarafin mesaji!");
+
+                // Mesaj icerigini bul
                 var messageText = null;
                 var messageType = "text";
                 var mediaInfo = null;
 
-                // 1. Text mesajı ara
+                // 1. Text mesaji ara
                 try {
                     var textNode = container.findOne(
                         id(this.config.APP_PACKAGE + ":id/" + this.config.MSG_TEXT_ID)
@@ -111,11 +152,11 @@
                     if (textNode) {
                         messageText = textNode.text();
                         messageType = "text";
-                        console.log("      Text: " + messageText);
+                        console.log("      [TEXT] " + messageText);
                     }
                 } catch (e) {}
 
-                // 2. Hediye mesajı ara
+                // 2. Hediye mesaji ara
                 if (!messageText) {
                     try {
                         var giftNode = container.findOne(
@@ -124,106 +165,64 @@
                         if (giftNode) {
                             messageText = giftNode.text();
                             messageType = "gift";
-                            
-                            // Hediye değerini de al
-                            try {
-                                var diamondNode = container.findOne(
-                                    id(this.config.APP_PACKAGE + ":id/text_view_diamond_num")
-                                );
-                                if (diamondNode) {
-                                    mediaInfo = {
-                                        diamonds: diamondNode.text()
-                                    };
-                                }
-                            } catch (e) {}
-                            
-                            console.log("      Hediye: " + messageText);
+                            console.log("      [GIFT] " + messageText);
                         }
                     } catch (e) {}
                 }
 
-                // 3. Resim/Video gibi medya ara (id_chat_msg_content FrameLayout)
+                // 3. Resim/Video gibi medya ara
                 if (!messageText) {
                     try {
                         var mediaContentNode = container.findOne(
                             id(this.config.APP_PACKAGE + ":id/" + this.config.MSG_CONTENT_ID)
                         );
                         if (mediaContentNode) {
-                            var mediaClass = mediaContentNode.className ? mediaContentNode.className() : "";
-                            
-                            // FrameLayout ise medya içeriğine sahip
-                            if (mediaClass.indexOf("FrameLayout") !== -1 || 
-                                mediaClass.indexOf("ViewGroup") !== -1) {
-                                messageType = "media";
-                                messageText = "[Medya İçeriği]";
-                                mediaInfo = {
-                                    type: "image_or_video",
-                                    hasContent: true
-                                };
-                                console.log("      Medya: image/video");
-                            }
+                            messageType = "media";
+                            messageText = "[Medya]";
+                            console.log("      [MEDIA]");
                         }
                     } catch (e) {}
                 }
 
-                // 4. Ses kaydı ara (id_chatting_voice_time_tv)
+                // 4. Ses kaydi ara
                 if (!messageText) {
                     try {
                         var voiceTimeNode = container.findOne(
                             id(this.config.APP_PACKAGE + ":id/" + this.config.VOICE_TIME_ID)
                         );
                         if (voiceTimeNode) {
-                            var voiceDuration = voiceTimeNode.text();
-                            messageText = "[Ses Kaydı]";
+                            messageText = "[Ses Kaydi]";
                             messageType = "voice";
-                            mediaInfo = {
-                                type: "voice",
-                                duration: voiceDuration  // örn: "00:08"
-                            };
-                            console.log("      Ses: " + voiceDuration);
-                        }
-                    } catch (e) {}
-                }
-
-                // 5. Sistem mesajı ara
-                if (!messageText) {
-                    try {
-                        var sysNode = container.findOne(
-                            id(this.config.APP_PACKAGE + ":id/id_chatting_sys_tips_tv")
-                        );
-                        if (sysNode) {
-                            messageText = sysNode.text();
-                            messageType = "system";
-                            console.log("      Sistem: " + messageText);
+                            console.log("      [VOICE]");
                         }
                     } catch (e) {}
                 }
 
                 if (!messageText) {
-                    console.log("      ⚠️  Mesaj içeriği bulunamadı");
+                    console.log("      [-] Mesaj icerigi bulunamadi");
                     return null;
                 }
 
-                // Zamanı ara
+                // Zamani ara
                 var timestamp = this._findTimestamp(container);
 
                 return {
                     isReceived: true,
                     text: messageText,
-                    type: messageType,           // text, gift, media, system
+                    type: messageType,
                     timestamp: timestamp,
-                    mediaInfo: mediaInfo,        // Ek medya bilgisi
+                    mediaInfo: mediaInfo,
                     containerIndex: index
                 };
 
             } catch (error) {
-                console.log("      ❌ Analiz hatası: " + error);
+                console.log("      [ERROR] Analiz hatasi: " + error);
                 return null;
             }
         },
 
         /**
-         * Mesaj zamanını bul
+         * Mesaj zamanini bul
          * @private
          */
         _findTimestamp: function(container) {
@@ -239,33 +238,58 @@
         },
 
         /**
-         * Son N mesajı al (karşı taraftan)
-         * @param count - Kaç mesaj alınacak
+         * Son N mesaji al (karsi taraftan, SADECE AVATAR OLANLAR)
+         * @param count - Kac mesaj alinacak
          */
         getLastNReceivedMessages: function(count) {
             try {
-                console.log("🔧 getLastNReceivedMessages(" + count + ") çağrıldı");
+                console.log("[*] getLastNReceivedMessages(" + count + ") cagrildi");
 
                 var messageContainers = className("android.widget.LinearLayout")
                     .visibleToUser(true)
                     .find();
 
+                // ONCE: Avatar olan mesajlari filtrele
+                var messagesWithAvatar = [];
+                for (var i = 0; i < messageContainers.length; i++) {
+                    var container = messageContainers[i];
+                    try {
+                        var avatars = container.find(
+                            id(this.config.APP_PACKAGE + ":id/" + this.config.USER_AVATAR_ID)
+                        );
+                        
+                        if (avatars && avatars.length > 0) {
+                            messagesWithAvatar.push({
+                                container: container,
+                                index: i,
+                                avatarBounds: avatars[0].bounds()
+                            });
+                        }
+                    } catch (e) {}
+                }
+
                 var receivedMessages = [];
 
-                for (var i = messageContainers.length - 1; i >= 0 && receivedMessages.length < count; i--) {
+                // Son N avatarli mesajdan geriye dogru tara
+                for (var i = messagesWithAvatar.length - 1; i >= 0 && receivedMessages.length < count; i--) {
                     try {
-                        var result = this._analyzeMessageContainer(messageContainers[i], i);
+                        var msgWithAvatar = messagesWithAvatar[i];
+                        var result = this._analyzeMessageContainer(
+                            msgWithAvatar.container,
+                            msgWithAvatar.index,
+                            msgWithAvatar.avatarBounds
+                        );
                         if (result && result.isReceived) {
                             receivedMessages.push(result);
                         }
                     } catch (e) {}
                 }
 
-                console.log("   ✅ " + receivedMessages.length + " mesaj bulundu");
+                console.log("[OK] " + receivedMessages.length + " mesaj bulundu");
                 return receivedMessages;
 
             } catch (error) {
-                console.log("❌ getLastNReceivedMessages() hatası: " + error);
+                console.log("[ERROR] getLastNReceivedMessages() hatasi: " + error);
                 return [];
             }
         }

@@ -1,468 +1,582 @@
 /**
  * ============================================================================
- * OKUNMAMIŞ MESAJ QUEUE SİSTEMİ (AutoJS6) - v4
+ * OKUNMAMIŞ MESAJ QUEUE SİSTEMİ (AutoJS6) - v9.0 SIMPLE
  * ============================================================================
  * 
- * Görevler:
- * 1. Okunmamış mesaj tespit et → handler çağır
- * 2. Max N deneme sonra liste başına dön
- * 3. App arkaplandaysa skip et, ön plana gelince devam et
- * 4. Her cihazda stabil çalış (swipe, koordinatlar)
- * 5. Handler bitince biz devam ettiririz
+ * SimpleBadgeFinder ile basitleştirilmiş versiyon
  */
 
+var SimpleBadgeFinder = require("./improved_badge_finder.js").SimpleBadgeFinder;
+var guard = require("./guard.js").guard;
 (function() {
+    "use strict";
+    
     var UnreadQueue = {
-        // ─────────────────────────────────────────────────────────
-        // AYARLAR
-        // ─────────────────────────────────────────────────────────
+        VERSION: "9.0.0-simple",
+        DEBUG: true,
+        
+        device: {
+            width: 0,
+            height: 0,
+            density: 0,
+            model: "",
+            initialized: false,
+            visibleTop: 0,
+            visibleBottom: 0,
+            swipeStartY: 0,
+            swipeEndY: 0,
+            swipeUpStartY: 0,
+            swipeUpEndY: 0,
+            centerX: 0
+        },
         
         config: {
             APP_PACKAGE: "com.fiya.android",
-            MAX_ATTEMPTS: 25,           // Liste kaç kez dolaşılır
-            SCROLL_DELAY: 400,         // Her scroll sonrası ms (artırıldı)
-            SWIPE_DURATION: 200,        // Swipe süresi ms (artırıldı)
-            SWIPE_X: 360,               // Sabit X koordinat
-            SWIPE_Y_START: 800,         // Aşağı scroll start (artırıldı)
-            SWIPE_Y_END: 200,           // Aşağı scroll end (artırıldı)
-            SWIPE_TOP_START: 200,       // Yukarı scroll start (artırıldı)
-            SWIPE_TOP_END: 800,         // Yukarı scroll end (artırıldı)
-            APP_CHECK_INTERVAL: 250,    // App kontrol aralığı (ms)
+            BASE_DELAY: 150,
+            SCROLL_DELAY: 200,
+            SWIPE_DURATION: 180,
+            FIND_TIMEOUT: 500,
+            MAX_ATTEMPTS: 25,
+            MAX_SCROLL_TO_TOP: 10,
+            PROCESSED_USER_EXPIRY: 1000 * 9,
+            MAX_PROCESSED_USERS: 150,
+            MAX_RETRIES: 3,
+            RETRY_DELAY: 200
         },
 
-        // ─────────────────────────────────────────────────────────
-        // DURUM
-        // ─────────────────────────────────────────────────────────
-        
         state: {
-            isActive: false,            // Queue çalışıyor mu?
-            isWaiting: false,           // Handler tamamlanması bekleniyormuş?
-            attemptCount: 0,            // Mevcut döngü içinde kaç kez arandı
-            totalFoundCount: 0,         // Toplamda kaç mesaj bulundu
-            totalAttemptCount: 0,       // Toplamda kaç kez arama yapıldı
-            scrollSteps: 0,             // Kaç adım scroll edildi
+            isActive: false,
+            isWaiting: false,
+            attemptCount: 0,
+            scrollSteps: 0,
+            totalFoundCount: 0,
+            errorCount: 0,
+            lastError: null,
+            loopCount: 0,
+            pendingScrollToTop: false,
+            pendingScrollReason: null,
         },
+
+        processedUsers: {},
+        badgeFinder: null,
 
         handlers: {
-            onFound: null,              // Mesaj bulundu
-            onMaxAttempts: null,        // Max deneme tamamlandı
+            onFound: null,
+            onMaxAttempts: null,
+            onError: null
         },
 
-        // ─────────────────────────────────────────────────────────
-        // İNİTYALİZASYON
-        // ─────────────────────────────────────────────────────────
-
-        init: function(opts) {
-            opts = opts || {};
-            console.log("📦 UnreadQueue init()");
-            
-            if (opts.onFound) this.handlers.onFound = opts.onFound;
-            if (opts.onMaxAttempts) this.handlers.onMaxAttempts = opts.onMaxAttempts;
-            if (opts.maxAttempts) this.config.MAX_ATTEMPTS = opts.maxAttempts;
-
-            console.log("   ✅ onFound handler set");
-            console.log("   ✅ Max attempts: " + this.config.MAX_ATTEMPTS);
-            return this;
+        _log: function(msg) {
+            if (this.DEBUG) {
+                try {
+                    console.log("[UQ] " + msg);
+                } catch(e) {}
+            }
+        },
+        
+        _logError: function(msg, err) {
+            var errorMsg = msg + (err ? ": " + String(err) : "");
+            console.error("[UQ ERROR] " + errorMsg);
+            this.state.lastError = errorMsg;
+            this.state.errorCount++;
         },
 
-        /**
-         * Queue'yu başlat
-         */
-        start: function() {
-            console.log("\n" + "=".repeat(60));
-            console.log("🚀 UnreadQueue START");
-            console.log("=".repeat(60));
+        _initDevice: function() {
+            if (this.device.initialized) return true;
             
-            this.state.isActive = true;
-            this.state.attemptCount = 0;
-            this.state.scrollSteps = 0;
-
-            // Senkron çalışma - setTimeout yok!
-            this._mainLoopSync();
-            
-            // Loop tamamlandığında (handler bitti veya max attempts)
-            // Otomatik olarak tekrar başlat
-            console.log("\n🔄 _mainLoopSync() tamamlandı, tekrar başlatılıyor...");
-            this.start();
-            
-            return this;
+            try {
+                this.device.width = device.width || 720;
+                this.device.height = device.height || 1280;
+                this.device.density = device.density || 2;
+                this.device.model = device.model || "unknown";
+                this.device.centerX = Math.floor(this.device.width / 2);
+                
+                sleep(300);
+                
+                this._calibrateVisibleArea();
+                this._calibrateSwipe();
+                this._calibrateTiming();
+                
+                this.device.initialized = true;
+                
+                this._log("📱 Cihaz: " + this.device.model);
+                this._log("   Ekran: " + this.device.width + "x" + this.device.height);
+                this._log("   Görünür: Y " + this.device.visibleTop + "-" + this.device.visibleBottom);
+                
+                return true;
+                
+            } catch (e) {
+                this._logError("Cihaz init hatası", e);
+                
+                this.device.width = 720;
+                this.device.height = 1280;
+                this.device.centerX = 360;
+                this.device.visibleTop = 250;
+                this.device.visibleBottom = 1350;
+                this.device.swipeStartY = 900;
+                this.device.swipeEndY = 350;
+                this.device.initialized = true;
+                
+                return true;
+            }
         },
 
-        /**
-         * Handler tamamlandı, queue devam et
-         */
-        continueAfterHandler: function() {
-            console.log("\n🔄 continueAfterHandler() çağrıldı");
+        _calibrateVisibleArea: function() {
+            try {
+                var recycler =
+                    id(this.config.APP_PACKAGE + ":id/id_recycler_view").findOne(600) ||
+                    id("id_recycler_view").findOne(600);
+
+                if (recycler) {
+                    var bounds = recycler.bounds();
+                    this.device.visibleTop = bounds.top + 10;
+                    this.device.visibleBottom = bounds.bottom - 10;
+                    this._log("   RecyclerView: " + bounds.top + "-" + bounds.bottom);
+                    return;
+                }
+            } catch (e) {}
+
+            this.device.visibleTop = Math.floor(this.device.height * 0.18);
+            this.device.visibleBottom = Math.floor(this.device.height * 0.97);
+            this._log("   RecyclerView bulunamadı, oran kullanıldı");
+        },
+
+        _calibrateSwipe: function() {
+            var visibleHeight = this.device.visibleBottom - this.device.visibleTop;
             
-            if (!this.state.isWaiting) {
-                console.log("⚠️  Queue zaten beklemiyor");
+            this.device.swipeStartY = this.device.visibleTop + Math.floor(visibleHeight * 0.75);
+            this.device.swipeEndY = this.device.visibleTop + Math.floor(visibleHeight * 0.20);
+            this.device.swipeUpStartY = this.device.visibleTop + Math.floor(visibleHeight * 0.25);
+            this.device.swipeUpEndY = this.device.visibleTop + Math.floor(visibleHeight * 0.80);
+        },
+
+        _calibrateTiming: function() {
+            var density = this.device.density;
+            
+            if (density <= 1.5) {
+                this.config.BASE_DELAY = 250;
+                this.config.SCROLL_DELAY = 350;
+                this.config.SWIPE_DURATION = 280;
+                this._log("   Düşük performans modu");
+            } else if (density >= 3) {
+                this.config.BASE_DELAY = 100;
+                this.config.SCROLL_DELAY = 150;
+                this.config.SWIPE_DURATION = 150;
+                this._log("   Yüksek performans modu");
+            }
+        },
+
+        _isAppForeground: function() {
+            // Yöntem 1: UI elementleri (en güvenilir)
+            try {
+                if (id(this.config.APP_PACKAGE + ":id/id_recycler_view").exists()) {
+                    return true;
+                }
+                if (id(this.config.APP_PACKAGE + ":id/id_conv_tab_all").exists()) {
+                    return true;
+                }
+                if (text("Hepsi").exists() && text("Mesajlar").exists()) {
+                    return true;
+                }
+            } catch (e) {}
+            
+            // Yöntem 2: Package kontrolü (fallback)
+            try {
+                var pkg = currentPackage();
+                if (pkg && pkg.indexOf("fiya") !== -1) {
+                    return true;
+                }
+            } catch (e) {}
+            
+            // Yöntem 3: Activity kontrolü (son çare)
+            try {
+                var act = currentActivity();
+                if (act && act.indexOf("fiya") !== -1) {
+                    return true;
+                }
+            } catch (e) {}
+            
+            return false;
+        },
+
+        _ensureOnMessagesPage: function() {
+            try {
+                var convTab = id(this.config.APP_PACKAGE + ":id/id_main_bottomtab_conv")
+                    .findOne(500);
+                
+                if (!convTab) {
+                    convTab = id("id_main_bottomtab_conv").findOne(500);
+                }
+
+                if (convTab) {
+                    var isSelected = false;
+                    try { isSelected = convTab.selected(); } catch(e) {}
+                    
+                    if (!isSelected) {
+                        this._log("   → Mesajlar sekmesine tıklanıyor");
+                        convTab.click();
+                        sleep(300);
+                    }
+                }
+            } catch(e) {
+                this._log("   ⚠️ Mesajlar sayfası kontrolü hatası: " + e);
+            }
+        },
+
+        _handlePopups: function() {
+            // Popup handling
+            return false;
+        },
+
+        _isUserProcessed: function(userName) {
+            if (!userName) return false;
+            
+            var entry = this.processedUsers[userName];
+            if (!entry) return false;
+            
+            var now = Date.now();
+            if (now - entry.timestamp > this.config.PROCESSED_USER_EXPIRY) {
+                delete this.processedUsers[userName];
                 return false;
             }
-
-            this.state.isWaiting = false;
-            console.log("✅ isWaiting = false");
-            console.log("   Queue senkron döngüsü devam edecek...\n");
-
-            // Senkron döngü devam edecek, extra çağrı yok
+            
             return true;
         },
 
-        /**
-         * Queue durumunu getir
-         */
-        getStatus: function() {
-            return {
-                isActive: this.state.isActive,
-                isWaiting: this.state.isWaiting,
-                attemptCount: this.state.attemptCount,
-                totalFoundCount: this.state.totalFoundCount,
-                totalAttemptCount: this.state.totalAttemptCount,
-                scrollSteps: this.state.scrollSteps,
-                maxAttempts: this.config.MAX_ATTEMPTS,
-                remaining: this.config.MAX_ATTEMPTS - this.state.totalFoundCount
+        _markUserProcessed: function(userName) {
+            if (!userName) return;
+            
+            this.processedUsers[userName] = {
+                timestamp: Date.now()
             };
-        },
-
-        // ─────────────────────────────────────────────────────────
-        // ANA LOOP (SENKRONİK)
-        // ─────────────────────────────────────────────────────────
-
-        _mainLoopSync: function() {
-            var self = this;
-
-            console.log("🔄 _mainLoopSync() başladı (Senkron çalışma)");
-            console.log("⏳ Başlangıçta 3 saniye bekleme (app stabilizasyonu için)");
-            sleep(3000);
-
-            // Ana döngü - Queue aktif olduğu sürece çalış
-            while (self.state.isActive) {
-                console.log("\n📍 Loop iterasyonu - attemptCount: " + self.state.attemptCount);
-
-                // Handler bekliyor mu?
-                if (self.state.isWaiting) {
-                    console.log("⏸️  Handler tamamlanması bekleniyor - çık");
-                    break;
-                }
-
-                // App ön yüzde değil mi?
-                if (!self._isAppForeground()) {
-                    console.log("⏳ App arkaplanda - 2 saniye bekle");
-                    sleep(2000);
-                    continue;
-                }
-
-                // Max attempts tamamlandı mı?
-                if (self.state.attemptCount >= self.config.MAX_ATTEMPTS) {
-                    console.log("\n⚠️  Max attempts (" + self.config.MAX_ATTEMPTS + ") tamamlandı");
-                    console.log("🔄 Liste başına dönülüyor...");
-                    self._scrollToTop();
-                    self.state.scrollSteps = 0;
-                    self.state.attemptCount = 0;
-
-                    if (self.handlers.onMaxAttempts) {
-                        console.log("🔗 onMaxAttempts handler çağrılıyor");
-                        try {
-                            self.handlers.onMaxAttempts();
-                        } catch (e) {
-                            console.log("❌ Handler hatası: " + e);
-                        }
-                    }
-
-                    // Tekrar başlat
-                    sleep(1000);
-                    continue;
-                }
-
-                // Okunmamış mesaj ara
-                self.state.attemptCount++;
-                console.log("\n📍 [" + self.state.attemptCount + "/" + self.config.MAX_ATTEMPTS + "] Okunmamış mesaj aranıyor...");
+            
+            var keys = Object.keys(this.processedUsers);
+            if (keys.length > this.config.MAX_PROCESSED_USERS) {
+                var sorted = keys.map(function(k) {
+                    return { key: k, time: this.processedUsers[k].timestamp };
+                }.bind(this));
                 
-                var result = self._findUnreadMessage();
-
-                if (result && result.found) {
-                    // ✅ BULUNDU!
-                    console.log("\n✅ BULUNDU: " + result.userName);
-                    console.log("   Okunmamış: " + result.unreadCount);
-                    
-                    self.state.isWaiting = true;
-                    console.log("   isWaiting = true (handler çalışıyor)");
-                    console.log("   ⏰ Handler bitince continueAfterHandler() çağır");
-
-                    if (self.handlers.onFound) {
-                        console.log("\n🔗 onFound handler çağrılıyor");
-                        try {
-                            self.handlers.onFound(result);
-                        } catch (e) {
-                            console.log("❌ Handler hatası: " + e);
-                            self.state.isWaiting = false;
-                        }
-                    }
-
-                    // Handler bekleniyor - çık
-                    break;
-                } else {
-                    // ⚠️ BULUNAMADI
-                    console.log("⚠️  Bulunamadı, scroll yapılıyor...");
-                    self._scrollDown();
-                    sleep(200);
+                sorted.sort(function(a, b) { return a.time - b.time; });
+                
+                for (var i = 0; i < 50; i++) {
+                    delete this.processedUsers[sorted[i].key];
                 }
             }
-
-            console.log("\n🏁 _mainLoopSync() tamamlandı");
         },
-
-        // ─────────────────────────────────────────────────────────
-        // TARAMA (STABİL)
-        // ─────────────────────────────────────────────────────────
-
-        _findUnreadMessage: function() {
-            try {
-                console.log("🔧 _findUnreadMessage() çağrıldı");
-
-                // App kontrolü
-                if (!this._isAppForeground()) {
-                    console.log("   ⚠️  App arkaplanda, tarama iptal");
-                    return { found: false };
-                }
-
-                var nodes = id(this.config.APP_PACKAGE + ":id/id_unread_tcv")
-                    .visibleToUser(true)
-                    .find();
-
-                console.log("   📋 " + (nodes ? nodes.length : 0) + " okunmamış node bulundu");
-
-                if (!nodes || nodes.length === 0) {
-                    return { found: false };
-                }
-
-                // İlk okunmamış mesajı bul
-                for (var i = 0; i < nodes.length; i++) {
-                    try {
-                        var node = nodes[i];
-                        var text = node.text();
-                        var count = parseInt(text, 10);
-
-                        console.log("   [Node " + i + "] text='" + text + "' count=" + count);
-
-                        if (count > 0) {
-                            console.log("   ✅ Okunmamış bulundu!");
-                            
-                            // Kullanıcı adını bul
-                            var userName = this._findUserName(node);
-                            console.log("   👤 Kullanıcı: " + userName);
-                            
-                            // Bounds al ve merkezi hesapla
-                            var bounds = node.bounds();
-                            var clickX = bounds.centerX() - 50;
-                            var clickY = bounds.centerY();
-                            
-                            console.log("   📍 Tıklama koordinatı: (" + clickX + ", " + clickY + ")");
-                            
-                            // Tıkla
-                            try {
-                                click(clickX, clickY);
-                                console.log("   ✅ Tıklama başarılı");
-                                sleep(600);
-                            } catch (clickErr) {
-                                console.log("   ⚠️  Tıklama hatası: " + clickErr);
-                            }
-
-                            return {
-                                found: true,
-                                userName: userName,
-                                unreadCount: count
-                            };
-                        }
-                    } catch (nodeErr) {
-                        console.log("   ⚠️  Node " + i + " işleme hatası: " + nodeErr);
-                        continue;
-                    }
-                }
-
-                console.log("   ⚠️  Geçerli okunmamış mesaj bulunamadı");
-                return { found: false };
-
-            } catch (e) {
-                console.log("   ❌ Tarama hatası: " + e);
-                return { found: false };
-            }
-        },
-
-        _findUserName: function(node) {
-            try {
-                var current = node;
-                for (var i = 0; i < 5 && current; i++) {
-                    try {
-                        var nameNode = current.findOne(
-                            id(this.config.APP_PACKAGE + ":id/id_user_name_tv")
-                        );
-                        if (nameNode) {
-                            var name = nameNode.text();
-                            console.log("      Bulundu (depth=" + i + "): " + name);
-                            return name;
-                        }
-                    } catch (e) {}
-                    
-                    try {
-                        current = current.parent();
-                    } catch (e) {
-                        break;
-                    }
-                }
-            } catch (e) {
-                console.log("      Hata: " + e);
-            }
-            return "Bilinmiyor";
-        },
-
-        // ─────────────────────────────────────────────────────────
-        // SCROLL İŞLEMLERİ
-        // ─────────────────────────────────────────────────────────
 
         _scrollDown: function() {
             try {
-                console.log("🔧 _scrollDown() çağrıldı (LİSTE AŞAĞI İNER)");
+                var x = this.device.centerX;
+                var y1 = this.device.swipeStartY;
+                var y2 = this.device.swipeEndY;
                 
-                // Parmağı YUKARIYA kaydır → liste AŞAĞI iner
-                swipe(
-                    this.config.SWIPE_X,
-                    800,  // AŞAĞIDAN BAŞLA
-                    this.config.SWIPE_X,
-                    200,  // YUKARIYA KAYDIR
-                    this.config.SWIPE_DURATION
-                );
-
-                console.log("   ✅ Liste aşağı indi");
+                swipe(x, y1, x, y2, this.config.SWIPE_DURATION);
                 this.state.scrollSteps++;
-
+                
                 sleep(this.config.SCROLL_DELAY);
-
+                
             } catch (e) {
-                console.log("❌ Scroll down hatası: " + e);
+                this._logError("scrollDown hatası", e);
             }
         },
 
         _scrollToTop: function() {
+            this._log("⬆️ Liste başına gidiliyor...");
+            
             try {
-                console.log("⬆️  En başa gidiliyor...");
-
-                var maxAttempts = 50;
-                var W = (typeof device !== "undefined" && device.width) ? device.width : 720;
-                var H = (typeof device !== "undefined" && device.height) ? device.height : 1411;
+                var W = this.device.width;
+                var H = this.device.height;
                 
-                // Swipe parametreleri
-                var x = (W * 0.5) | 0;              // Ekran ortası
-                var y1 = (H * 0.38) | 0;            // Başlangıç (üst-orta)
-                var y2 = (H * 0.82) | 0;            // Bitiş (alt)
-                var durationMs = 180;               // Swipe süresi
-                var gapMs = 80;                    // Swipe'lar arası bekleme
-
-                for (var i = 0; i < maxAttempts; i++) {
-                    // Bildirimler görüldü mü kontrol et
+                var x = Math.floor(W * 0.5);
+                var y1 = Math.floor(H * 0.35);
+                var y2 = Math.floor(H * 0.80);
+                
+                for (var i = 0; i < this.config.MAX_SCROLL_TO_TOP; i++) {
                     try {
                         if (text("Bildirimler").exists()) {
-                            console.log("✅ BİLDİRİMLER GÖRÜLDÜ! En başa ulaşıldı!");
-                            return;
+                            this._log("✅ Başa ulaşıldı! (Bildirimler görünür)");
+                            sleep(this.config.BASE_DELAY);
+                            return true;
                         }
                     } catch (e) {}
-
-                    console.log("📍 Deneme " + (i + 1) + ": 5x Agresif swipe yapılıyor...");
-
-                    // 5 kere agresif swipe yap (bir turda)
-                    for (var j = 0; j < 5; j++) {
-                        swipe(x, y1, x, y2, durationMs);
-                        
-                        // Son swipe'dan sonra kontrol et
-                        if (j === 4) {
-                            try {
-                                if (text("Bildirimler").exists()) {
-                                    console.log("✅ BİLDİRİMLER GÖRÜLDÜ! (swipe sırasında)");
-                                    return;
-                                }
-                            } catch (e) {}
-                        }
-                        
-                        sleep(gapMs);
+                    
+                    for (var j = 0; j < 3; j++) {
+                        swipe(x, y1, x, y2, 150);
+                        sleep(100);
                     }
-
+                    
                     sleep(100);
                 }
                 
-                try {
-                    if (text("Bildirimler").exists()) {
-                        console.log("✅ BİLDİRİMLER GÖRÜLDÜ! En başa ulaşıldı!");
-                        return;
-                    }else{
-                        return this._scrollToTop();
-                    }
-                } catch (e) {}
-
-                console.log("✅ Maksimum deneme tamamlandı");
-
+                this._log("⚠️ Max scroll tamamlandı");
+                return false;
+                
             } catch (e) {
-                console.log("❌ Scroll to top hatası: " + e);
+                this._logError("scrollToTop hatası", e);
+                return false;
             }
         },
 
-        /**
-         * Manuel olarak liste başına dön (istediğimiz zaman)
-         */
-        scrollToTopManual: function() {
-            console.log("\n" + "=".repeat(60));
-            console.log("🔥 MANUEL SCROLL TO TOP TETİKLENDİ!");
-            console.log("=".repeat(60));
+        _findUnreadMessage: function() {
+            try {
+                if (!this.badgeFinder) {
+                    this.badgeFinder = Object.create(SimpleBadgeFinder);
+                    this.badgeFinder.config.APP_PACKAGE = this.config.APP_PACKAGE;
+                    this.badgeFinder.DEBUG = this.DEBUG;
+                }
+
+                var result = this.badgeFinder.findUnreadMessage(this.processedUsers);
+                
+                if (result.found) {
+                    this._log("✅ Badge bulundu: " + result.userName + " (" + result.unreadCount + ")");
+                    return result;
+                } else {
+                    this._log("   ℹ️ Badge bulunamadı: " + result.reason);
+                    return result;
+                }
+                
+            } catch(e) {
+                this._logError("_findUnreadMessage hatası", e);
+                return { found: false, reason: "error", error: String(e) };
+            }
+        },
+
+        _openChat: function(result) {
+            if (!result || !result.found) {
+                return false;
+            }
+
+            try {
+                if (this.badgeFinder) {
+                    return this.badgeFinder.openChat(result);
+                }
+            } catch(e) {
+                this._logError("_openChat hatası", e);
+            }
+
+            return false;
+        },
+
+        _loop: function() {
+            var self = this;
             
-            this._scrollToTop();
-            this.state.scrollSteps = 0;
+            if (!self.state.isActive) {
+                return;
+            }
+            
+            if (self.state.isWaiting) {
+                self._log("⏸️ Handler bekleniyor...");
+                return;
+            }
+            
+            self.state.loopCount++;
+            
+            try {
+                // 1. Cihaz kalibrasyonu
+                self._initDevice();
+                
+                // 2. Popup kontrolü
+                if (self._handlePopups()) {
+                    setTimeout(function() { self._loop(); }, self.config.BASE_DELAY);
+                    return;
+                }
+                
+                // 3. App kontrolü
+                if (!self._isAppForeground()) {
+                    self._log("⏳ App aktif değil, bekleniyor...");
+                    setTimeout(function() { self._loop(); }, 1000);
+                    return;
+                }
+                guard();
+                // 4. Mesajlar sayfası kontrolü
+                self._ensureOnMessagesPage();
+                
+                // 5. Max attempts kontrolü
+                if (self.state.attemptCount >= self.config.MAX_ATTEMPTS) {
+                    self._log("🔄 Max attempts, başa dönülüyor...");
+                    self._scrollToTop();
+                    self.state.attemptCount = 0;
+                    self.state.scrollSteps = 0;
+                    
+                    if (self.handlers.onMaxAttempts) {
+                        try { self.handlers.onMaxAttempts(); } catch(e) {}
+                    }
+                    
+                    setTimeout(function() { self._loop(); }, self.config.BASE_DELAY);
+                    return;
+                }
+                
+                // 6. Okunmamış mesaj ara
+                self.state.attemptCount++;
+                self._log("\n📍 [" + self.state.attemptCount + "/" + self.config.MAX_ATTEMPTS + "] Loop #" + self.state.loopCount);
+                
+                var result = self._findUnreadMessage();
+                
+                if (result.found) {
+                    // ✅ BULUNDU
+                    self._log("✅ BULUNDU: " + result.userName + " (" + result.unreadCount + ")");
+                    
+                    var opened = self._openChat(result);
+                    
+                    if (opened) {
+                        // Mark user processed - KALDIRILDI
+                        // Handler içinde kontrol edilecek
+                        self.state.totalFoundCount++;
+                        self.state.isWaiting = true;
+                        
+                        if (self.handlers.onFound) {
+                            try {
+                                self.handlers.onFound(result);
+                            } catch (handlerErr) {
+                                self._logError("onFound handler hatası", handlerErr);
+                                self.state.isWaiting = false;
+                                setTimeout(function() { self._loop(); }, self.config.BASE_DELAY);
+                            }
+                        } else {
+                            self.state.isWaiting = false;
+                            setTimeout(function() { self._loop(); }, self.config.BASE_DELAY);
+                        }
+                    } else {
+                        self._log("   ⚠️ Chat açılamadı, scroll yapılıyor");
+                        self._scrollDown();
+                        setTimeout(function() { self._loop(); }, 50);
+                    }
+                    
+                } else {
+                    // ⚠️ Bulunamadı, scroll yap
+                    self._log("   ↓ Scroll down...");
+                    self._scrollDown();
+                    setTimeout(function() { self._loop(); }, 50);
+                }
+                
+            } catch (loopErr) {
+                self._logError("Loop hatası", loopErr);
+                setTimeout(function() { self._loop(); }, 500);
+            }
+        },
+
+        // ─────────────────────────────────────────────────────────
+        // PUBLIC API
+        // ─────────────────────────────────────────────────────────
+        init: function(opts) {
+            opts = opts || {};
+            
+            this._log("\n" + "=".repeat(50));
+            this._log("📦 UnreadQueue " + this.VERSION);
+            this._log("=".repeat(50));
+            
+            if (opts.onFound) this.handlers.onFound = opts.onFound;
+            if (opts.onMaxAttempts) this.handlers.onMaxAttempts = opts.onMaxAttempts;
+            if (opts.onError) this.handlers.onError = opts.onError;
+            
+            if (opts.maxAttempts) this.config.MAX_ATTEMPTS = opts.maxAttempts;
+            if (opts.processedUserExpiry) this.config.PROCESSED_USER_EXPIRY = opts.processedUserExpiry;
+            if (typeof opts.debug !== "undefined") this.DEBUG = opts.debug;
+            
+            this.state.isActive = false;
+            this.state.isWaiting = false;
             this.state.attemptCount = 0;
+            this.state.scrollSteps = 0;
+            this.state.loopCount = 0;
+            this.state.errorCount = 0;
             
-            console.log("✅ Manuel scroll tamamlandı, sayaçlar sıfırlandı\n");
+            this.device.initialized = false;
+            this.badgeFinder = null;
+            
             return this;
         },
 
-        // ─────────────────────────────────────────────────────────
-        // KONTROLLER (STABİL)
-        // ─────────────────────────────────────────────────────────
+        start: function() {
+            if (this.state.isActive) {
+                this._log("⚠️ Zaten çalışıyor");
+                return this;
+            }
+            
+            this._log("\n🚀 START");
+            this.state.isActive = true;
+            this.state.attemptCount = 0;
+            this.state.scrollSteps = 0;
+            
+            var self = this;
+            setTimeout(function() { self._loop(); }, 100);
+            
+            return this;
+        },
 
-        _isAppForeground: function() {
-            try {
-                // Yöntem 1: Package kontrolü
-                var pkg = currentPackage();
-                console.log("   📦 currentPackage(): " + pkg);
-                
-                var isPkgMatch = (pkg === this.config.APP_PACKAGE || pkg.indexOf("com.fiya") === 0);
-                console.log("   ✅ Package match: " + isPkgMatch);
+        stop: function() {
+            this._log("🛑 STOP");
+            this.state.isActive = false;
+            this.state.isWaiting = false;
+            return this;
+        },
 
-                // Yöntem 2: UI element kontrolü (Mesajlar texti)
-                var hasMessagesUI = false;
-                try {
-                    // Chat ekranında "Mesajlar" text'i ara
-                    var messagesText = text("Mesajlar").exists() || 
-                                     textContains("Mesajlar").exists();
-                    hasMessagesUI = !!messagesText;
-                    console.log("   💬 'Mesajlar' UI bulundu: " + hasMessagesUI);
-                } catch (e) {
-                    console.log("   ⚠️  UI kontrol hatası: " + e);
-                }
+        pause: function() {
+            this._log("⏸️ PAUSE");
+            this.state.isWaiting = true;
+            return this;
+        },
 
-                // Her iki şartta da true ise ön yüzde
-                var isFront = isPkgMatch || hasMessagesUI;
-                console.log("   ⭐ Sonuç - Ön yüzde: " + isFront);
-                
-                return isFront;
-            } catch (e) {
-                console.log("   ⚠️  _isAppForeground() hatası: " + e);
+        resume: function() {
+            this._log("▶️ RESUME");
+            this.state.isWaiting = false;
+            
+            if (this.state.isActive) {
+                var self = this;
+                setTimeout(function() { self._loop(); }, 100);
+            }
+            return this;
+        },
+
+        continueAfterHandler: function() {
+            if (!this.state.isWaiting) {
+                this._log("⚠️ Zaten beklemiyor");
                 return false;
             }
+            
+            this._log("🔄 Continue after handler");
+            this.state.isWaiting = false;
+            
+            if (this.state.isActive) {
+                var self = this;
+                setTimeout(function() { self._loop(); }, this.config.BASE_DELAY);
+            }
+            
+            return true;
+        },
+
+        requestScrollToTop: function(reason) {
+            this.state.pendingScrollToTop = true;
+            this.state.pendingScrollReason = reason || "external";
+            return true;
+        },
+
+        recalibrate: function() {
+            this._log("🔧 Yeniden kalibrasyon...");
+            this.device.initialized = false;
+            this._initDevice();
+            return this;
+        },
+
+        getStatus: function() {
+            return {
+                version: this.VERSION,
+                isActive: this.state.isActive,
+                isWaiting: this.state.isWaiting,
+                attemptCount: this.state.attemptCount,
+                scrollSteps: this.state.scrollSteps,
+                totalFound: this.state.totalFoundCount,
+                loopCount: this.state.loopCount,
+                errorCount: this.state.errorCount,
+                lastError: this.state.lastError,
+                processedUsers: Object.keys(this.processedUsers).length,
+                device: {
+                    model: this.device.model,
+                    screen: this.device.width + "x" + this.device.height,
+                    visibleArea: this.device.visibleTop + "-" + this.device.visibleBottom
+                }
+            };
         }
     };
 
-    // ============================================================================
-    // EXPORTS
-    // ============================================================================
-
-    module.exports = {
-        UnreadQueue: UnreadQueue
-    };
-
+    module.exports = { UnreadQueue: UnreadQueue };
 })();

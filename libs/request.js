@@ -31,7 +31,8 @@ function sendChat(messages, key) {
   var bodyObj = {
     messages: buildMessagesArray(messages),
     key: key,
-    persona: (Config && Config.PERSONA) ? Config.PERSONA : undefined
+    persona: (Config && Config.PERSONA) ? Config.PERSONA : undefined,
+    device_id: (Config && Config.DEVICE_KEY) ? Config.DEVICE_KEY : undefined,
   };
 
   var bodyStr = JSON.stringify(bodyObj);

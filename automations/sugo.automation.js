@@ -206,11 +206,60 @@ function answerMessage(payload, attempt) {
     const chatFuture = startChatAsync(messages, key);
     perf.step("API isteği başlatıldı");
 
-    // 5) Mesaj yaz + gönder (koordinatlar cihazına göre zaten doğru)
-    UIUtils.tap(chat_input_area.x, chat_input_area.y, 400) //input alanına tıklama
-    sleep(500)
-    UIUtils.showKeyboard()
-    sleep(400)
+    // Input alanına tıkla ve klavyenin göründüğünü garantile
+    UIUtils.tap(chat_input_area.x, chat_input_area.y, 400);
+    sleep(300);
+    
+    // Klavyenin göründüğünü kontrol et - görmeyene kadar dene
+    var keyboardRetries = 0;
+    var maxKeyboardRetries = 5;
+    
+    while (keyboardRetries < maxKeyboardRetries) {
+        try {
+            // Input'a focus olduğunu doğrula (TextInputAction veya benzeri)
+            var inputElement = className("android.widget.EditText").visibleToUser(true).findOne(1000);
+            
+            if (inputElement && inputElement.focused()) {
+                console.log("✅ Input focused oldu, klavye gösterilmeye çalışılıyor...");
+                UIUtils.showKeyboard();
+                sleep(400);
+                
+                // Klavyenin göründüğünü kontrol et
+                // Soft keyboard belirtileri: input alanı üzerine touch event yapılabilir, text yazılabilir
+                var checkResult = false;
+                try {
+                    // Basit test: bir karakter yaz ve sil
+                    inputElement.setText("hahaha");
+                    sleep(100);
+                    inputElement.setText("");
+                    checkResult = true;
+                    console.log("✅ Klavye tam çalışıyor, text yazılabiliyor");
+                } catch (e) {
+                    console.log("⚠️  Klavye henüz hazır değil, tekrar deniyor... (" + (keyboardRetries + 1) + ")");
+                }
+                
+                if (checkResult) {
+                    break;  // Başarılı, çık
+                }
+            } else {
+                console.log("⚠️  Input henüz focused değil, tekrar tıklanıyor...");
+                UIUtils.tap(chat_input_area.x, chat_input_area.y, 300);
+                sleep(300);
+            }
+        } catch (e) {
+            console.log("⚠️  Focus kontrol hatası: " + e + ", tekrar deniyor...");
+            UIUtils.tap(chat_input_area.x, chat_input_area.y, 300);
+            sleep(300);
+        }
+        
+        keyboardRetries++;
+    }
+    
+    if (keyboardRetries >= maxKeyboardRetries) {
+        console.log("⚠️  Klavye tam açılamadı, devam ediliyor...");
+    }
+    
+    sleep(200);
     perf.step("Input focus");
 
     log("mesaj atılıyor", key)

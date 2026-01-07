@@ -18,8 +18,6 @@ const { initGlobalLogger, logSafe } = require("./libs/logger.js");
 
 const UIUtils = require("./libs/utils.js");
 const Supabase = require("./libs/supabase.js");
-const NotificationWatcher = require("./libs/notification.js");
-//const QueueWorker = require("./libs/queue.js");
 const sugo = require("./automations/sugo.automation.js");
 const { UnreadQueue } = require('./libs/main.queue.js');
 
@@ -50,6 +48,9 @@ var idleNotified = false;
 var idleTimer = null;
 var lastEvent = Date.now();
 
+// ✅ Yeni: onFound son çalışma zamanı (ms)
+var lastOnFoundAt = 0;
+
 // 1) Cihazı Supabase'ten bul
 var device = Supabase.fetchDeviceByKey(Config.DEVICE_KEY);
 if (!device) {
@@ -72,46 +73,24 @@ sugo.init({ deviceId: deviceId, deviceEnums: DEVICE_ENUMS });
 // 2) Bu cihaza bağlı paket listesini çek
 var watchPkgs = Supabase.fetchWatchPackages(deviceId);
 
-// 3) Bildirim dinleyiciyi başlat (takip edilecek paket listesiyle)
-NotificationWatcher.init(deviceId, watchPkgs);
-
 // 4) Queue worker'ı başlat
 //QueueWorker.start(deviceId, handleEvent);
 
 toast("Automation client başlatıldı.");
 
-function handleEvent(ev) {
-  lastEvent = Date.now();
-  idleNotified = false;
 
-  var p = (ev && ev.payload) ? ev.payload : {};
-  if (!p || !p.type) return;
-
-  try {
-    if (p.type === "unread_messages") {
-      sugo.answerMessage(p);
-      return;
-    }
-
-    if (p.type === "restart_app") {
-      sugo.restartApp();
-      return;
-    }
-
-    if (p.type === "fin_new_match") {
-      // sugo.findNewMatch(p.pkg);
-      return;
-    }
-  } catch (e) {
-    logSafe("handleEvent error:", e);
-  }
-}
 
 const {ChatMessageHelper} = require("./libs/last.chat.message.js");
 UnreadQueue
   .init({
-    maxAttempts: 10,
+    maxAttempts: 7,
     onFound: function(result) {
+      // ✅ Yeni: onFound tetiklendiği zamanı kaydet
+      lastOnFoundAt = Date.now();
+      // (opsiyonel) diğer modüllerden de görülebilsin
+      try { globalThis.__lastOnFoundAt = lastOnFoundAt; } catch(e) {}
+
+      sleep(1500)
       console.log("✅ " + result.userName + " bulundu");
       var lastMsg = ChatMessageHelper.getLastReceivedMessage();
       if(lastMsg == null){
@@ -136,3 +115,30 @@ UnreadQueue
     }
   })
   .start();
+
+try {
+  events.observeNotification();
+  events.onNotification(function(n) {
+      try {
+          var pkg = n.getPackageName();
+          // Sadece hedef uygulama
+          if (pkg && pkg.indexOf("fiya") !== -1) {
+              // ✅ Yeni: sadece son onFound 30sn içindeyse işlem yap
+              var now = Date.now();
+              var diff = now - (lastOnFoundAt || 0);
+
+              if (diff <= 30 * 1000) {
+                  console.log("📩 Bildirim geldi, son onFound " + Math.round(diff/1000) + "sn önce -> işlem yapılıyor...");
+                  UnreadQueue.requestScrollToTop("notification");
+              } else {
+                  console.log("⏭️ Bildirim geldi ama son onFound " + Math.round(diff/1000) + "sn önce -> es geçildi.");
+              }
+          }
+      } catch (e) {
+          console.log("Bildirim hatası: " + e);
+      }
+  });
+  console.log("✅ Bildirim dinleyici aktif");
+} catch (e) {
+  console.log("❌ Bildirim dinleyici başlatılamadı: " + e);
+}

@@ -1,5 +1,5 @@
 # AutoJs6 Automation Config
 # Bu dosya olmadan uygulama çalışmaz.
 # Format: KEY=VALUE
-DEVICE_KEY=9150a47f-8743-4eb2-8f71-ab45eb9645f2
-PERSONA=selin
+DEVICE_KEY=ac074878-2dc7-4593-83cb-a6ec174334cf
+PERSONA=aylin

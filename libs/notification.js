@@ -9,6 +9,7 @@ var listenPkgs = [];
 var notifQueue = null;
 var notifWorkerStarted = false;
 var notificationIds = []; // Bildirim ID'lerini takip etmek için
+var _handlerNN = (t)=> {console.log(t)}
 
 function _ensureNotifWorker() {
     if (notifWorkerStarted) return;
@@ -224,13 +225,13 @@ function onNotificationPosted(n) {
         }
 
         text = text.replace('aceledin eve onunla sohbet edin', 'Aşkım');
-
+        
         const sender = title;
         var eventKey = buildEventKey(pkg, sender);
         logSafe("Notification -> event_key:", eventKey, "text:", text, "sender:", sender);
 
         appendNotificationMessageAsync(deviceId, eventKey, text, sender, pkg);
-
+        
         // Bildirimi sil
         if (typeof n.getKey === "function") {
             var notifKey = n.getKey();
