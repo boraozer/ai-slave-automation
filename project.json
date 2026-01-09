@@ -1,8 +1,8 @@
 {
   "name": "PakizeyeYasMama",
-  "main": "main.js",
+  "main": "settings_ui_v2.js",
   "packageName": "com.bora.aimessagingautomation",
-  "versionName": "1.2.1",
+  "versionName": "1.2.4",
   "versionCode": 2,
   "assets": [],
   "encryptLevel": 0,

@@ -25,6 +25,15 @@ const { UnreadQueue } = require('./libs/main.queue.js');
 initGlobalLogger();
 
 
+const SimpleCrashHandler = require("./libs/app.crash.handler.js");
+
+SimpleCrashHandler.start("com.fiya.android", 5000, function(event) {
+  console.log("📊 Event:", event.type, event.timestamp);
+});
+
+console.log("✅ Crash handler aktif");
+
+
 // Global uyumluluk: modüller globalThis üzerinden de erişebilsin
 try { globalThis.Config = Config; } catch (e) {}
 try { globalThis.logSafe = globalThis.logSafe || logSafe; } catch (e) {}

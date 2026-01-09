@@ -41,7 +41,7 @@ Notlar
   AutoJs6'da modül scope daha sıkı olduğu için bunlar init() ile context'e taşındı.
 
 
-  dosya çekme = adb pull /sdcard/Scripts/build/PakizeyeYasMama_v1.2.1.apk ~/Desktop/
+  dosya çekme = adb pull /sdcard/Scripts/build/PakizeyeYasMama_v1.2.4.apk ~/Desktop/
   ip alma= adb shell ip -f inet addr show wlan0     
   adb çek= adb shell uiautomator dump --compressed /sdcard/window_dump.xml && adb pull /sdcard/window_dump.xml .
   adb install -r "PakizeyeYasMama_v1.2.1.apk"

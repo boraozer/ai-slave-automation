@@ -1,13 +1,16 @@
 (function(){
-  // conf.js: sabit yoldaki automation_config.txt ile DEVICE_KEY + PERSONA override eder.
-  // Sabit dosya yolu:
-  var FIXED_CONFIG_PATH = "/sdcard/automation_config.txt";
+  // conf.js: Persistent storage kullanarak config yönetimi (APK silse bile kalır)
+  
+  // YEDEK: Dosya yolu hala export edilir (backward compatibility)
+  var appInternalPath = files.cwd();
+  var FIXED_CONFIG_PATH = files.join(appInternalPath, "automation_config.txt");
+  
   var EXTERNAL_CONFIG_OK = true;
   var EXTERNAL_CONFIG_CREATED = false;
 
   // Varsayılanlar
   var Config = {
-    DEVICE_KEY: "0ab3ed30-9489-4460-8f49-00e9ce02a8a8",
+    DEVICE_KEY: "",
     SUPABASE_URL: "https://yhlmotkfvirccocdayoi.supabase.co",
     SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlobG1vdGtmdmlyY2NvY2RheW9pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0Njg0MzYsImV4cCI6MjA4MTA0NDQzNn0.DJ48Ar05vfC_Gh8GH6r5Dd0AccycoWtPo8wZd2heO1E",
     POLL_INTERVAL_MS: 5000,
@@ -15,6 +18,10 @@
     CHAT_API_TOKEN: "TOKEN",
     PERSONA: 'yeliz'
   };
+
+  // Persistent storage (APK silse bile kalır!)
+  var STORAGE_NAME = "automation_persistent_config";
+  var storage = null;
 
   function stripQuotes(s) {
     if (typeof s !== "string") return s;
@@ -29,6 +36,7 @@
     if (!obj) return;
     var dk = obj.device_key || obj.deviceKey || obj.DEVICE_KEY || obj.devicekey;
     var p  = obj.persona || obj.PERSONA || obj.Persona;
+    
     if (dk != null && String(dk).trim()) Config.DEVICE_KEY = stripQuotes(String(dk));
     if (p  != null && String(p).trim())  Config.PERSONA = stripQuotes(String(p));
   }
@@ -54,42 +62,12 @@
     return out;
   }
 
-  // İzinleri iste (ilk açılışta)
-  function requestStoragePermissions() {
-    try {
-      console.log("Dosya erişim izinleri isteniyor...");
-      
-      // Android 11+ için MANAGE_EXTERNAL_STORAGE
-      if (typeof app !== "undefined" && typeof app.requestPermission === "function") {
-        app.requestPermission("android.permission.READ_EXTERNAL_STORAGE");
-        sleep(500);
-        app.requestPermission("android.permission.WRITE_EXTERNAL_STORAGE");
-        sleep(500);
-        
-        // Android 11+
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-          try {
-            app.requestPermission("android.permission.MANAGE_EXTERNAL_STORAGE");
-            sleep(500);
-          } catch (e) {}
-        }
-      }
-      
-      console.log("İzin isteme tamamlandı");
-      return true;
-    } catch (e) {
-      console.log("İzin isteme hatası:", e);
-      return false;
-    }
-  }
-
-  // Dosya var mı kontrolü (robust)
+  // Dosya var mı kontrolü (backward compatibility)
   function fileExists(path) {
     try {
       if (typeof files !== "undefined" && typeof files.exists === "function") {
         return files.exists(path);
       }
-      // Fallback: okumayı dene
       try {
         if (typeof files !== "undefined" && typeof files.read === "function") {
           files.read(path);
@@ -103,90 +81,111 @@
     }
   }
 
-  // Dosya oluştur (güvenli)
+  // Dosya oluştur (backward compatibility - artık kullanılmıyor)
   function createConfigFile() {
-    try {
-      console.log("Konfigürasyon dosyası oluşturuluyor:", FIXED_CONFIG_PATH);
-      
-      var example = [
-        "# AutoJs6 Automation Config",
-        "# Bu dosya olmadan uygulama çalışmaz.",
-        "# Format: KEY=VALUE",
-        "",
-        "DEVICE_KEY=",
-        "PERSONA=",
-        "",
-        "# Not: DEVICE_KEY ve PERSONA değerlerini kendi verilerinle değiştirin"
-      ].join("\n");
-
-      // Yöntem 1: files.write (AutoJs6 native)
-      if (typeof files !== "undefined" && typeof files.write === "function") {
-        files.write(FIXED_CONFIG_PATH, example);
-        console.log("Dosya başarıyla oluşturuldu:", FIXED_CONFIG_PATH);
-        EXTERNAL_CONFIG_CREATED = true;
-        return true;
-      }
-
-      // Yöntem 2: shell komutu (fallback)
-      try {
-        shell("echo '" + example.replace(/'/g, "\\'") + "' > " + FIXED_CONFIG_PATH, false);
-        console.log("Dosya shell ile oluşturuldu");
-        EXTERNAL_CONFIG_CREATED = true;
-        return true;
-      } catch (e) {}
-
-      // Yöntem 3: Java ile yazma
-      try {
-        var FileWriter = java.io.FileWriter;
-        var fw = new FileWriter(FIXED_CONFIG_PATH);
-        fw.write(example);
-        fw.close();
-        console.log("Dosya Java ile oluşturuldu");
-        EXTERNAL_CONFIG_CREATED = true;
-        return true;
-      } catch (e) {}
-
-      console.log("Dosya oluşturulamadı - izinler kontrol edin");
-      EXTERNAL_CONFIG_OK = false;
-      return false;
-
-    } catch (e) {
-      console.log("Dosya oluşturma hatası:", e);
-      EXTERNAL_CONFIG_OK = false;
-      return false;
-    }
+    console.log("Persistent storage kullanıldığı için dosya oluşturulmayacak");
+    EXTERNAL_CONFIG_CREATED = true;
+    return true;
   }
 
-  // Dosya oku
+  // Dosya oku (backward compatibility)
   function readConfigFile() {
     try {
       if (!fileExists(FIXED_CONFIG_PATH)) {
-        console.log("Konfigürasyon dosyası bulunamadı");
         return null;
       }
-
       if (typeof files !== "undefined" && typeof files.read === "function") {
-        var raw = files.read(FIXED_CONFIG_PATH);
-        console.log("Konfigürasyon dosyası okundu");
-        return raw;
+        return files.read(FIXED_CONFIG_PATH);
       }
-
       return null;
     } catch (e) {
-      console.log("Dosya okuma hatası:", e);
       return null;
     }
   }
 
-  // Ana load fonksiyonu
-  function loadExternalConfig() {
-    console.log("=== KONFIGÜRASYON YÜKLEME BAŞLADI ===");
+  // ============================================
+  // YENİ: Persistent Storage Fonksiyonları
+  // ============================================
+  
+  /**
+   * Storage'ı başlat
+   */
+  function initStorage() {
+    try {
+      storage = storages.create(STORAGE_NAME);
+      console.log("✅ Persistent storage başlatıldı");
+      return true;
+    } catch (e) {
+      console.log("❌ Storage başlatılamadı:", e);
+      return false;
+    }
+  }
+  
+  /**
+   * Storage'dan config yükle
+   */
+  function loadFromStorage() {
+    if (!storage) return false;
     
-    // ADIM 1: İzinleri iste
-    requestStoragePermissions();
-    sleep(1000);
+    try {
+      var deviceKey = storage.get("DEVICE_KEY");
+      var persona = storage.get("PERSONA");
+      
+      if (deviceKey) Config.DEVICE_KEY = deviceKey;
+      if (persona) Config.PERSONA = persona;
+      
+      console.log("✅ Config storage'dan yüklendi");
+      return !!(deviceKey || persona);
+    } catch (e) {
+      console.log("❌ Storage okuma hatası:", e);
+      return false;
+    }
+  }
+  
+  /**
+   * Config'i storage'a kaydet (dışarıdan çağrılabilir)
+   */
+  function saveToStorage(deviceKey, persona) {
+    if (!storage) {
+      console.log("❌ Storage başlatılmamış");
+      return false;
+    }
+    
+    try {
+      if (deviceKey) {
+        storage.put("DEVICE_KEY", deviceKey);
+        Config.DEVICE_KEY = deviceKey;
+      }
+      if (persona) {
+        storage.put("PERSONA", persona);
+        Config.PERSONA = persona;
+      }
+      console.log("✅ Config storage'a kaydedildi");
+      return true;
+    } catch (e) {
+      console.log("❌ Storage yazma hatası:", e);
+      return false;
+    }
+  }
 
-    // ADIM 2: Dosya var mı kontrol et
+  // Ana load fonksiyonu - HEM storage HEM dosya kontrol eder
+  function loadExternalConfig() {
+    console.log("=== KONFİGÜRASYON YÜKLEME BAŞLADI ===");
+    
+    // ADIM 1: Persistent storage'ı başlat
+    var storageOk = initStorage();
+    
+    // ADIM 2: Storage'dan yükle (öncelik 1)
+    if (storageOk && loadFromStorage()) {
+      console.log("📦 Storage'dan yüklendi - DEVICE_KEY:", Config.DEVICE_KEY, "PERSONA:", Config.PERSONA);
+      EXTERNAL_CONFIG_OK = true;
+      console.log("=== KONFİGÜRASYON BAŞARILI (STORAGE) ===");
+      return;
+    }
+    
+    // ADIM 3: Dosyadan yükle (fallback - backward compatibility)
+    console.log("ℹ️ Storage'da config yok, dosyadan deneniyor...");
+    
     if (!fileExists(FIXED_CONFIG_PATH)) {
       console.log("Dosya yok, oluşturuluyor...");
       if (!createConfigFile()) {
@@ -194,10 +193,8 @@
         EXTERNAL_CONFIG_OK = false;
         return;
       }
-      sleep(500);
     }
 
-    // ADIM 3: Dosyayı oku ve uygula
     var raw = readConfigFile();
     if (!raw) {
       console.log("Dosya okunamadı!");
@@ -218,6 +215,11 @@
         var obj = JSON.parse(trimmed);
         applyOverrides(obj);
         console.log("JSON konfigürasyon yüklendi");
+        
+        // Dosyadan yüklendiyse storage'a da kaydet
+        if (storageOk) {
+          saveToStorage(Config.DEVICE_KEY, Config.PERSONA);
+        }
         return;
       } catch (e) {
         console.log("JSON parse hatası, txt olarak devam et");
@@ -231,18 +233,29 @@
       PERSONA: kv.PERSONA || kv.persona || kv.Persona
     };
     applyOverrides(obj);
+    
+    // Dosyadan yüklendiyse storage'a da kaydet
+    if (storageOk) {
+      saveToStorage(Config.DEVICE_KEY, Config.PERSONA);
+    }
+    
     console.log("TXT konfigürasyon yüklendi");
     console.log("DEVICE_KEY:", Config.DEVICE_KEY);
     console.log("PERSONA:", Config.PERSONA);
-    console.log("=== KONFIGÜRASYON BAŞARILI ===");
+    console.log("=== KONFİGÜRASYON BAŞARILI (DOSYA) ===");
   }
 
   loadExternalConfig();
 
+  // ============================================
+  // EXPORT - AYNI YAPI KORUNDU!
+  // ============================================
   module.exports = {
     Config: Config,
     FIXED_CONFIG_PATH: FIXED_CONFIG_PATH,
     EXTERNAL_CONFIG_OK: EXTERNAL_CONFIG_OK,
-    EXTERNAL_CONFIG_CREATED: EXTERNAL_CONFIG_CREATED
+    EXTERNAL_CONFIG_CREATED: EXTERNAL_CONFIG_CREATED,
+    // YENİ: Storage kaydetme fonksiyonu (UI'den çağrılabilir)
+    saveConfig: saveToStorage
   };
 })();
