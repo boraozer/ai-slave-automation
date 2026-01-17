@@ -13,7 +13,6 @@
 var SimpleBadgeFinder = require("./improved_badge_finder.js").SimpleBadgeFinder;
 var guard = require("./guard.js").guard;
 var internetChecker = require("./check.internet.js").checkInternet;
-
 (function() {
     "use strict";
     
@@ -62,7 +61,7 @@ var internetChecker = require("./check.internet.js").checkInternet;
             loopCount: 0,
             pendingScrollToTop: false,
             pendingScrollReason: null,
-            internet_connection: false
+            internet_connection: true
         },
 
         processedUsers: {},
@@ -90,15 +89,18 @@ var internetChecker = require("./check.internet.js").checkInternet;
         },
 
         _initDevice: function() {
+            var self = this
             if (this.device.initialized) return true;
-
+            toast("🔧 Cihaz kalibrasyonu yapılıyor...");
             try {
                 internetChecker((status) => {
-                    this.state.internet_connection = status;
+                    self.state.internet_connection = status;
+                    toast("🌐 İnternet bağlantısı: " + (status ? "VAR" : "YOK"));
                 }, 1000 * 10);
                 this._log("SUCCESS: Internet bağlantı kontrolcüsü başlatıldı.")
             }catch(e)
             {
+                console.log(e)
                 this._log("ERR: Internet bağlantı kontrolcüsü başlatılamadı.")
             }
             
@@ -419,7 +421,8 @@ var internetChecker = require("./check.internet.js").checkInternet;
                 // currentPackage() YOK! Crash handler kontrol edecek.
                 if (!self._isAppForegroundLight()) {
                     self._log("⏳ App aktif değil gibi görünüyor...");
-                    setTimeout(function() { self._loop(); }, 1000);
+                    toast("⏳ SUGO ön planda değil.");
+                    setTimeout(function() { self._loop(); }, 10000);
                     return;
                 }
                 
