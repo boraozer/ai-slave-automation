@@ -28,7 +28,7 @@ initGlobalLogger();
 const SimpleCrashHandler = require("./libs/app.crash.handler.js");
 
 SimpleCrashHandler.start("com.fiya.android", 5000, function(event) {
-  console.log("📊 Event:", event.type, event.timestamp);
+  console.log("Event:", event.type); // "crash_dialog" veya "not_foreground"
 });
 
 console.log("✅ Crash handler aktif");

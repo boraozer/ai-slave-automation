@@ -1,18 +1,24 @@
 /**
  * ============================================================================
- * OKUNMAMIŞ MESAJ QUEUE SİSTEMİ (AutoJS6) - v9.0 SIMPLE
+ * OKUNMAMIŞ MESAJ QUEUE SİSTEMİ (AutoJS6) - v11.0 HYBRID
  * ============================================================================
  * 
- * SimpleBadgeFinder ile basitleştirilmiş versiyon
+ * HYBRID YAKLAŞIM:
+ * - Loop: Sadece hafif UI kontrolü (10-20ms)
+ * - Crash Handler: Ağır foreground kontrolü + ön plana getirme (60sn'de)
+ * 
+ * Bu yaklaşım en iyi performans/güvenlik dengesini sağlar!
  */
 
 var SimpleBadgeFinder = require("./improved_badge_finder.js").SimpleBadgeFinder;
 var guard = require("./guard.js").guard;
+var internetChecker = require("./check.internet.js").checkInternet;
+
 (function() {
     "use strict";
     
     var UnreadQueue = {
-        VERSION: "9.0.0-simple",
+        VERSION: "11.0.0-hybrid",
         DEBUG: true,
         
         device: {
@@ -35,13 +41,14 @@ var guard = require("./guard.js").guard;
             BASE_DELAY: 150,
             SCROLL_DELAY: 200,
             SWIPE_DURATION: 180,
-            FIND_TIMEOUT: 500,
+            FIND_TIMEOUT: 300,
             MAX_ATTEMPTS: 25,
             MAX_SCROLL_TO_TOP: 10,
             PROCESSED_USER_EXPIRY: 1000 * 12,
             MAX_PROCESSED_USERS: 150,
             MAX_RETRIES: 3,
-            RETRY_DELAY: 200
+            RETRY_DELAY: 200,
+            LOOP_DELAY_FAST: 50,
         },
 
         state: {
@@ -55,6 +62,7 @@ var guard = require("./guard.js").guard;
             loopCount: 0,
             pendingScrollToTop: false,
             pendingScrollReason: null,
+            internet_connection: false
         },
 
         processedUsers: {},
@@ -69,20 +77,30 @@ var guard = require("./guard.js").guard;
         _log: function(msg) {
             if (this.DEBUG) {
                 try {
-                    console.log("[UQ] " + msg);
+                    console.log("[UQ-HYBRID] " + msg);
                 } catch(e) {}
             }
         },
         
         _logError: function(msg, err) {
             var errorMsg = msg + (err ? ": " + String(err) : "");
-            console.error("[UQ ERROR] " + errorMsg);
+            console.error("[UQ-HYBRID ERROR] " + errorMsg);
             this.state.lastError = errorMsg;
             this.state.errorCount++;
         },
 
         _initDevice: function() {
             if (this.device.initialized) return true;
+
+            try {
+                internetChecker((status) => {
+                    this.state.internet_connection = status;
+                }, 1000 * 10);
+                this._log("SUCCESS: Internet bağlantı kontrolcüsü başlatıldı.")
+            }catch(e)
+            {
+                this._log("ERR: Internet bağlantı kontrolcüsü başlatılamadı.")
+            }
             
             try {
                 this.device.width = device.width || 720;
@@ -124,8 +142,8 @@ var guard = require("./guard.js").guard;
         _calibrateVisibleArea: function() {
             try {
                 var recycler =
-                    id(this.config.APP_PACKAGE + ":id/id_recycler_view").findOne(600) ||
-                    id("id_recycler_view").findOne(600);
+                    id(this.config.APP_PACKAGE + ":id/id_recycler_view").findOne(300) ||
+                    id("id_recycler_view").findOne(300);
 
                 if (recycler) {
                     var bounds = recycler.bounds();
@@ -166,46 +184,53 @@ var guard = require("./guard.js").guard;
             }
         },
 
-        _isAppForeground: function() {
-            // Yöntem 1: UI elementleri (en güvenilir)
+        /**
+         * HYBRID: Hafif foreground kontrolü - SADECE UI element
+         * currentPackage() YOK! Crash handler yapacak.
+         */
+        _isAppForegroundLight: function() {
             try {
+
+                // Yöntem 1: RecyclerView var mı? (EN GÜÇLÜ KANIT)
                 if (id(this.config.APP_PACKAGE + ":id/id_recycler_view").exists()) {
                     return true;
                 }
+                if (id(this.config.APP_PACKAGE + ":id/id_user_avatar_iv").exists()) {
+                    return true;
+                }
+
+                const inChat = text("Bir şey söyle…").exists();
+                if(inChat){
+                    return true;
+                }
+                
+                // Yöntem 2: Bottom tab var mı?
                 if (id(this.config.APP_PACKAGE + ":id/id_conv_tab_all").exists()) {
                     return true;
                 }
-                if (text("Hepsi").exists() && text("Mesajlar").exists()) {
+                
+                // Yöntem 3: Karakteristik text'ler
+                if (text("Hepsi").exists() || text("Mesajlar").exists()) {
                     return true;
                 }
-            } catch (e) {}
-            
-            // Yöntem 2: Package kontrolü (fallback)
-            try {
-                var pkg = currentPackage();
-                if (pkg && pkg.indexOf("fiya") !== -1) {
-                    return true;
-                }
-            } catch (e) {}
-            
-            // Yöntem 3: Activity kontrolü (son çare)
-            try {
-                var act = currentActivity();
-                if (act && act.indexOf("fiya") !== -1) {
-                    return true;
-                }
-            } catch (e) {}
-            
-            return false;
+                
+                // Hiçbiri yoksa muhtemelen arka planda
+                return false;
+                
+            } catch (e) {
+                // Hata olursa güvenli tarafta kal - devam et
+                // (False negative yerine false positive tercih et)
+                return true;
+            }
         },
 
         _ensureOnMessagesPage: function() {
             try {
                 var convTab = id(this.config.APP_PACKAGE + ":id/id_main_bottomtab_conv")
-                    .findOne(500);
+                    .findOne(300);
                 
                 if (!convTab) {
-                    convTab = id("id_main_bottomtab_conv").findOne(500);
+                    convTab = id("id_main_bottomtab_conv").findOne(300);
                 }
 
                 if (convTab) {
@@ -368,12 +393,21 @@ var guard = require("./guard.js").guard;
                 self._log("⏸️ Handler bekleniyor...");
                 return;
             }
+
+            if(self.state.internet_connection == false){
+                self._log("❌ İnternet bağlantısı yok, bekleniyor...");
+                toast("❌ İnternet bağlantısı yok, bekleniyor...")
+                setTimeout(function() { self._loop(); }, 5000);
+                return;
+            }
             
             self.state.loopCount++;
             
             try {
-                // 1. Cihaz kalibrasyonu
-                self._initDevice();
+                // 1. Cihaz kalibrasyonu (sadece ilk kez)
+                if (!self.device.initialized) {
+                    self._initDevice();
+                }
                 
                 // 2. Popup kontrolü
                 if (self._handlePopups()) {
@@ -381,15 +415,20 @@ var guard = require("./guard.js").guard;
                     return;
                 }
                 
-                // 3. App kontrolü
-                if (!self._isAppForeground()) {
-                    self._log("⏳ App aktif değil, bekleniyor...");
+                // 3. HAFİF foreground kontrolü (10-20ms)
+                // currentPackage() YOK! Crash handler kontrol edecek.
+                if (!self._isAppForegroundLight()) {
+                    self._log("⏳ App aktif değil gibi görünüyor...");
                     setTimeout(function() { self._loop(); }, 1000);
                     return;
                 }
+                
                 guard();
-                // 4. Mesajlar sayfası kontrolü
-                self._ensureOnMessagesPage();
+                
+                // 4. Mesajlar sayfası kontrolü (her 5 loop'ta bir)
+                if (self.state.loopCount % 5 === 0) {
+                    self._ensureOnMessagesPage();
+                }
                 
                 // 5. Max attempts kontrolü
                 if (self.state.attemptCount >= self.config.MAX_ATTEMPTS) {
@@ -414,13 +453,11 @@ var guard = require("./guard.js").guard;
                 
                 if (result.found) {
                     // ✅ BULUNDU
-                    self._log("✅ BULUNDU: " + result.userName + " (" + result.unreadCount + ")");
+                    self._log("✅ BULUNDU: " + result.userName + " (" + result.unreadCount + ") [" + (result.method || "unknown") + "]");
                     
                     var opened = self._openChat(result);
                     
                     if (opened) {
-                        // Mark user processed - KALDIRILDI
-                        // Handler içinde kontrol edilecek
                         self.state.totalFoundCount++;
                         self.state.isWaiting = true;
                         
@@ -439,14 +476,14 @@ var guard = require("./guard.js").guard;
                     } else {
                         self._log("   ⚠️ Chat açılamadı, scroll yapılıyor");
                         self._scrollDown();
-                        setTimeout(function() { self._loop(); }, 50);
+                        setTimeout(function() { self._loop(); }, self.config.LOOP_DELAY_FAST);
                     }
                     
                 } else {
                     // ⚠️ Bulunamadı, scroll yap
                     self._log("   ↓ Scroll down...");
                     self._scrollDown();
-                    setTimeout(function() { self._loop(); }, 50);
+                    setTimeout(function() { self._loop(); }, self.config.LOOP_DELAY_FAST);
                 }
                 
             } catch (loopErr) {
@@ -463,6 +500,7 @@ var guard = require("./guard.js").guard;
             
             this._log("\n" + "=".repeat(50));
             this._log("📦 UnreadQueue " + this.VERSION);
+            this._log("💡 HYBRID: Hafif loop + Crash handler kontrol");
             this._log("=".repeat(50));
             
             if (opts.onFound) this.handlers.onFound = opts.onFound;
@@ -492,7 +530,10 @@ var guard = require("./guard.js").guard;
                 return this;
             }
             
-            this._log("\n🚀 START");
+            this._log("\n🚀 START (HYBRID Mode)");
+            this._log("💡 Loop: Sadece UI kontrolü");
+            this._log("💡 Crash Handler: Ağır kontrol + ön plana getirme");
+            
             this.state.isActive = true;
             this.state.attemptCount = 0;
             this.state.scrollSteps = 0;

@@ -32,6 +32,25 @@ function runSafetyChecks(checks) {
 const safetyChecks = [
     {
         check: () => {
+            // İptal butonu veya Check-in geçiş elementleri var mı?
+            const cancelButton = text("İptal").exists();
+            const checkInSkip =  text("Check-in").exists();
+            const familyTitle =  text("Aileler Meydanı").exists();
+            const supportChat = text("Canlı destek").exists();
+            const inChat =  text("Bir şey söyle…").exists();
+
+            // Eğer bu elementler varsa kontrol BAŞARISIZ (false döndür)
+            // çünkü onları geçmemiz lazım
+            return !(cancelButton || checkInSkip || familyTitle || inChat || supportChat);
+        },
+        fix: () => {
+            console.log("İptal/Check-in elementleri tespit edildi, geri dönülüyor...");
+            back();
+            sleep(1000);
+        }
+    },
+    {
+        check: () => {
             return id("com.fiya.android:id/tv_main_msg").exists();
         },
         fix: () => {

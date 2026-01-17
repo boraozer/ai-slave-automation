@@ -1,6 +1,13 @@
 /**
- * app.crash.handler.simple.js
- * Basit crash handler - Sadece crash dialog'ları yakalar ve uygulamayı restart eder
+ * app.crash.handler.lightweight.js
+ * Lightweight Crash Handler - Sadece CRASH ve 30 dakika Foreground
+ * 
+ * Özellikler:
+ * 1. SADECE crash dialog tespit eder
+ * 2. Foreground kontrol 30 dakikada bir
+ * 3. Minimal overhead - çok hızlı
+ * 4. isAppForeground() cache sistemi (3sn TTL)
+ * 5. Foreground check thread yok - sadece Timer kullanıyor
  */
 
 (function() {
@@ -9,109 +16,78 @@
         
         var isMonitoring = false;
         var monitorThread = null;
-        var foregroundCheckThread = null; // YENİ: Ayrı foreground kontrol thread'i
+        var foregroundCheckTimer = null;
         var targetPackage = null;
-        var checkInterval = 5000; // 5 saniyede bir crash kontrolü
-        var foregroundCheckInterval = 20000; // 20 saniyede bir foreground kontrolü
+        var checkInterval = 5000;           // Crash check: 5 saniye
+        var foregroundCheckInterval = 1800000; // 30 dakika = 1800 saniye
         var onCrashCallback = null;
         
-        /**
-         * Uygulama process'i çalışıyor mu? (arka planda bile olsa)
-         */
-        function isAppProcessRunning() {
-            try {
-                // Package manager'dan kontrol et
-                var context = android.app.Activity.currentActivity();
-                var am = context.getSystemService(android.content.Context.ACTIVITY_SERVICE);
-                var processes = am.getRunningAppProcesses();
-                
-                for (var i = 0; i < processes.size(); i++) {
-                    var process = processes.get(i);
-                    if (process.processName === targetPackage) {
-                        return true;
-                    }
-                }
-                return false;
-            } catch (e) {
-                // Fallback: currentPackage kontrolü
-                try {
-                    var pkg = currentPackage();
-                    return pkg === targetPackage;
-                } catch (e2) {
-                    return false;
-                }
-            }
-        }
+        // OPTIMIZATION: Cache sistemi
+        var _foregroundCache = {
+            value: true,
+            timestamp: 0,
+            ttl: 3000 // 3 saniye cache
+        };
         
         /**
-         * Uygulama ön planda mı? (En güvenilir kontrol)
-         * mResumedActivity mantığı: Package + Activity kontrolü
+         * OPTIMIZED: Uygulama ön planda mı? (Cache ile)
          */
         function isAppForeground() {
+            var now = Date.now();
+            
+            // Cache kontrolü - 3 saniye içinde tekrar sorma
+            if (now - _foregroundCache.timestamp < _foregroundCache.ttl) {
+                return _foregroundCache.value;
+            }
+            
             try {
                 var pkg = currentPackage();
                 var activity = currentActivity();
                 
-                // Önce package kontrolü (hızlı)
+                // Package kontrolü
                 if (pkg !== targetPackage) {
-                    return false; // Kesin foreground değil
+                    _foregroundCache.value = false;
+                    _foregroundCache.timestamp = now;
+                    return false;
                 }
                 
-                // Package doğru, şimdi activity kontrolü
-                // Activity null veya boş olabilir mi kontrol et
+                // Activity kontrolü
                 if (!activity || activity.length < 5) {
-                    return false; // Activity bilgisi yok
+                    _foregroundCache.value = false;
+                    _foregroundCache.timestamp = now;
+                    return false;
                 }
                 
-                // Activity yapısı: com.voicemaker.main.MainActivity
-                // veya tam path: com.fiya.android/com.voicemaker.main.MainActivity
-                
-                // voicemaker içeriyorsa kesin fiya uygulaması
-                if (activity.indexOf("voicemaker") !== -1) {
-                    return true;
-                }
-                
-                // com.fiya.android içeriyorsa kesin bizim app
-                if (activity.indexOf(targetPackage) !== -1) {
-                    return true;
-                }
-                
-                // Package doğru ama activity tanınamadı
-                // Güvenli tarafta kal: TRUE döndür (package zaten doğru)
-                console.log("⚠️ Activity tanınamadı ama package doğru:", activity);
+                // Activity doğru ise foreground'da demek
+                _foregroundCache.value = true;
+                _foregroundCache.timestamp = now;
                 return true;
                 
             } catch (e) {
                 console.log("isAppForeground hatası:", e);
+                _foregroundCache.value = false;
+                _foregroundCache.timestamp = now;
                 return false;
             }
         }
         
         /**
          * Crash/ANR dialog var mı kontrol et
-         * Çoklu dil desteği
          */
         function hasCrashDialog() {
             try {
-                // Tüm diller için crash kelimeleri
+                // Türkçe ve İngilizce crash keywords
                 var crashKeywords = [
-                    // Türkçe
                     "yanıt vermiyor", "yanit vermiyor", "durduruldu", "durdu", 
                     "kapandı", "kapandi", "çalışmıyor", "calısmiyor",
-                    // İngilizce
                     "isn't responding", "not responding", "has stopped", 
                     "stopped working", "keeps stopping", "unfortunately",
-                    "app has stopped", "crashed",
-                    // Diğer diller
-                    "maalesef", "ne répond pas", "reagiert nicht", 
-                    "не отвечает", "応答していません"
+                    "app has stopped", "crashed"
                 ];
                 
-                // Her kelimeyi kontrol et
                 for (var i = 0; i < crashKeywords.length; i++) {
                     var keyword = crashKeywords[i];
                     
-                    // Text ve desc'de ara (case-insensitive)
                     if (textMatches(new RegExp(keyword, "i")).exists()) {
                         console.log("🚨 Crash dialog bulundu (text):", keyword);
                         return true;
@@ -133,28 +109,19 @@
         
         /**
          * Crash dialog'daki Tamam/OK butonuna bas
-         * Çoklu dil desteği
          */
         function clickOkButton() {
             try {
-                // Tüm diller için buton metinleri
                 var buttonTexts = [
-                    // Türkçe
                     "Tamam", "TAMAM", "tamam",
                     "Kapat", "KAPAT", "kapat",
-                    // İngilizce
                     "OK", "Ok", "ok",
-                    "Close", "CLOSE", "close",
-                    "Got it", "GOT IT",
-                    // Diğer diller
-                    "OK", "Fermer", "Schließen", "Закрыть", "閉じる"
+                    "Close", "CLOSE", "close"
                 ];
                 
-                // Her buton metnini dene
                 for (var i = 0; i < buttonTexts.length; i++) {
                     var btnText = buttonTexts[i];
                     
-                    // Text ile ara
                     var btn = text(btnText).findOne(500);
                     if (btn && btn.clickable()) {
                         console.log("✅ Buton bulundu (text):", btnText);
@@ -163,7 +130,6 @@
                         return true;
                     }
                     
-                    // Desc ile ara
                     btn = desc(btnText).findOne(500);
                     if (btn && btn.clickable()) {
                         console.log("✅ Buton bulundu (desc):", btnText);
@@ -171,20 +137,20 @@
                         sleep(500);
                         return true;
                     }
-                    
-                    // ID ile ara (bazı cihazlarda)
-                    try {
-                        btn = id("android:id/button1").findOne(500); // Pozitif buton
-                        if (btn && btn.clickable()) {
-                            console.log("✅ Buton bulundu (id): android:id/button1");
-                            btn.click();
-                            sleep(500);
-                            return true;
-                        }
-                    } catch (e) {}
                 }
                 
-                // Hiçbir buton bulunamadıysa back tuşu dene
+                // Fallback: ID kontrol
+                try {
+                    btn = id("android:id/button1").findOne(500);
+                    if (btn && btn.clickable()) {
+                        console.log("✅ Buton bulundu (id): android:id/button1");
+                        btn.click();
+                        sleep(500);
+                        return true;
+                    }
+                } catch (e) {}
+                
+                // Son çare: Back tuşu
                 console.log("⬅️ Buton bulunamadı, back tuşu deneniyor");
                 back();
                 sleep(500);
@@ -197,20 +163,25 @@
         }
         
         /**
-         * Uygulamayı ön plana getir (home() KULLANMADAN)
+         * Uygulamayı ön plana getir
          */
         function bringToForeground() {
             try {
                 console.log("📱 Uygulama ön plana getiriliyor:", targetPackage);
                 
-                // Yöntem 1: launch()
-                launch(targetPackage);
-                sleep(1500);
+                // Cache'i temizle
+                _foregroundCache.timestamp = 0;
                 
-                if (isAppForeground()) {
-                    console.log("✅ Ön planda (launch)");
-                    return true;
-                }
+                // Yöntem 1: launch() (en hızlı)
+                try {
+                    launch(targetPackage);
+                    sleep(1500);
+                    
+                    if (isAppForeground()) {
+                        console.log("✅ Ön planda (launch)");
+                        return true;
+                    }
+                } catch (e) {}
                 
                 // Yöntem 2: app.launchPackage()
                 try {
@@ -218,97 +189,58 @@
                     sleep(1500);
                     
                     if (isAppForeground()) {
-                        console.log("✅ Ön planda (launchPackage)");
+                        console.log("✅ Ön planda (app.launchPackage)");
                         return true;
                     }
                 } catch (e) {}
                 
-                // Yöntem 3: Intent ile
+                // Yöntem 3: Intent ile başlat
                 try {
+                    var context = android.app.Activity.currentActivity();
                     var pm = context.getPackageManager();
                     var intent = pm.getLaunchIntentForPackage(targetPackage);
                     if (intent) {
                         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
                         context.startActivity(intent);
                         sleep(1500);
                         
                         if (isAppForeground()) {
-                            console.log("✅ Ön planda (Intent)");
+                            console.log("✅ Ön planda (intent)");
                             return true;
                         }
                     }
                 } catch (e) {}
                 
-                console.log("⚠️ Ön plana getirme kısmen başarılı");
+                console.log("⚠️ Ön plana getirilemedi");
                 return false;
                 
             } catch (e) {
-                console.log("❌ Ön plana getirme hatası:", e);
+                console.log("bringToForeground hatası:", e);
                 return false;
             }
         }
         
         /**
-         * Uygulamayı restart et ve 1 dakika boyunca foreground kontrolü yap
-         * Crash sonrası çağrılır
+         * Uygulamayı restart et (kısa kontrol)
          */
         function restartApp() {
             try {
-                console.log("🔄 Uygulama restart ediliyor:", targetPackage);
+                console.log("🔄 Uygulama restart ediliyor...");
                 
-                // Yöntem 1: launch()
-                launch(targetPackage);
-                sleep(2500);
+                // Cache'i temizle
+                _foregroundCache.timestamp = 0;
                 
-                // Restart sonrası 1 dakika boyunca foreground kontrolü
-                console.log("⏱️ 1 dakika boyunca foreground kontrolü başlıyor...");
-                var startTime = Date.now();
-                var maxWaitTime = 60000; // 1 dakika
-                var checkCount = 0;
+                bringToForeground();
                 
-                while (Date.now() - startTime < maxWaitTime) {
-                    checkCount++;
-                    
-                    // Foreground'da mı kontrol et
-                    if (isAppForeground()) {
-                        console.log("✅ Uygulama ön planda (" + checkCount + ". kontrol, " + Math.round((Date.now() - startTime) / 1000) + "sn sonra)");
-                        sleep(3000); // 3 saniye bekle ve tekrar kontrol et
-                        continue;
-                    }
-                    
-                    // Foreground'da değil - tekrar başlat
-                    console.log("⚠️ Uygulama ön planda değil (" + checkCount + ". kontrol), tekrar başlatılıyor...");
-                    
-                    // Yöntem 2: app.launchPackage()
-                    try {
-                        app.launchPackage(targetPackage);
-                        sleep(2000);
-                    } catch (e) {}
-                    
-                    // Hala başarısız - Yöntem 3: Intent
-                    if (!isAppForeground()) {
-                        try {
-                            var pm = context.getPackageManager();
-                            var intent = pm.getLaunchIntentForPackage(targetPackage);
-                            if (intent) {
-                                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                                context.startActivity(intent);
-                                sleep(2000);
-                            }
-                        } catch (e) {}
-                    }
-                    
-                    sleep(3000); // 3 saniye bekle
-                }
+                // 15 saniye bekle
+                sleep(15000);
                 
-                // 1 dakika sonunda final kontrol
                 if (isAppForeground()) {
-                    console.log("✅ Restart başarılı - 1 dakikalık kontrol tamamlandı");
+                    console.log("✅ Restart başarılı - uygulama foreground'da");
                     return true;
                 } else {
-                    console.log("⚠️ 1 dakikalık kontrol tamamlandı ama uygulama foreground'da değil");
+                    console.log("⚠️ Restart sonrası uygulama foreground'da değil");
                     return false;
                 }
                 
@@ -319,62 +251,19 @@
         }
         
         /**
-         * Foreground monitoring loop (20 saniyede bir)
-         * Sadece ön planda mı kontrol eder, crash sonrası değil
-         */
-        function foregroundMonitorLoop() {
-            console.log("👁️ Foreground monitoring başladı (20sn aralıkla)");
-            
-            while (isMonitoring) {
-                try {
-                    sleep(foregroundCheckInterval);
-                    
-                    // Foreground'da mı kontrol et
-                    if (!isAppForeground()) {
-                        console.log("📱 Uygulama foreground'da değil, ön plana getiriliyor...");
-                        
-                        // Callback varsa çağır
-                        if (onCrashCallback) {
-                            try {
-                                onCrashCallback({
-                                    type: "not_foreground",
-                                    package: targetPackage,
-                                    timestamp: Date.now()
-                                });
-                            } catch (e) {}
-                        }
-                        
-                        // Ön plana getir
-                        bringToForeground();
-                    } else {
-                        console.log("✅ Foreground check: OK");
-                    }
-                    
-                } catch (e) {
-                    console.log("Foreground monitor loop hatası:", e);
-                    sleep(foregroundCheckInterval);
-                }
-            }
-            
-            console.log("👁️ Foreground monitoring durduruldu");
-        }
-        
-        /**
-         * Ana crash monitoring loop (5 saniyede bir)
-         * SADECE crash dialog kontrolü yapar
+         * OPTIMIZED: Ana crash monitoring loop (5 saniyede bir)
          */
         function monitorLoop() {
             console.log("👁️ Crash monitoring başladı:", targetPackage);
-            console.log("⏱️ Crash kontrol aralığı:", checkInterval + "ms");
-            console.log("ℹ️ Sadece crash dialog'ları kontrol ediliyor");
+            console.log("🚨 SADECE CRASH DIALOG KONTROL");
+            console.log("⏱️ Crash kontrol aralığı: 5 saniye");
+            console.log("👁️ Foreground kontrol aralığı: 30 dakika");
             
             while (isMonitoring) {
                 try {
-                    // SADECE crash dialog kontrolü
                     if (hasCrashDialog()) {
-                        console.log("🚨 Crash dialog tespit edildi!");
+                        console.log("🚨 CRASH DIALOG TESPİT EDİLDİ!");
                         
-                        // Callback varsa çağır
                         if (onCrashCallback) {
                             try {
                                 onCrashCallback({
@@ -385,15 +274,12 @@
                             } catch (e) {}
                         }
                         
-                        // OK butonuna bas
                         clickOkButton();
                         sleep(1000);
                         
-                        // Uygulamayı restart et (1 dakikalık foreground kontrolü ile)
                         restartApp();
                     }
                     
-                    // Bekleme
                     sleep(checkInterval);
                     
                 } catch (e) {
@@ -403,6 +289,49 @@
             }
             
             console.log("👁️ Crash monitoring durduruldu");
+        }
+        
+        /**
+         * 30 dakikada bir foreground kontrol
+         */
+        function scheduleForegroundCheck() {
+            console.log("⏲️ Foreground kontrol zamanlanıyor (30 dakika sonra)");
+            
+            foregroundCheckTimer = setInterval(function() {
+                try {
+                    if (!isMonitoring) {
+                        clearInterval(foregroundCheckTimer);
+                        return;
+                    }
+                    
+                    console.log("👁️ [30dk Kontrol] Foreground kontrol yapılıyor...");
+                    
+                    // Cache'i temizle ki gerçek kontrol yapsın
+                    _foregroundCache.timestamp = 0;
+                    
+                    if (!isAppForeground()) {
+                        console.log("⚠️ [30dk Kontrol] Uygulama foreground'da değil!");
+                        
+                        if (onCrashCallback) {
+                            try {
+                                onCrashCallback({
+                                    type: "not_foreground",
+                                    package: targetPackage,
+                                    timestamp: Date.now(),
+                                    period: "30min_check"
+                                });
+                            } catch (e) {}
+                        }
+                        
+                        bringToForeground();
+                    } else {
+                        console.log("✅ [30dk Kontrol] Uygulama foreground'da - OK");
+                    }
+                    
+                } catch (e) {
+                    console.log("30dk kontrol hatası:", e);
+                }
+            }, foregroundCheckInterval);
         }
         
         /**
@@ -419,19 +348,27 @@
             onCrashCallback = callback || null;
             isMonitoring = true;
             
-            // Thread 1: Crash monitoring (5 saniyede bir)
+            // Cache reset
+            _foregroundCache = {
+                value: true,
+                timestamp: 0,
+                ttl: 3000
+            };
+            
+            // Thread: Crash monitoring (5 saniyede bir)
             monitorThread = threads.start(function() {
                 monitorLoop();
             });
             
-            // Thread 2: Foreground monitoring (20 saniyede bir)
-            foregroundCheckThread = threads.start(function() {
-                foregroundMonitorLoop();
-            });
+            // Timer: Foreground kontrol (30 dakikada bir)
+            scheduleForegroundCheck();
             
-            console.log("✅ SimpleCrashHandler başlatıldı");
-            console.log("🔍 Crash check: 5 saniyede bir");
-            console.log("👁️ Foreground check: 20 saniyede bir");
+            console.log("✅ SimpleCrashHandler başlatıldı (Lightweight)");
+            console.log("═════════════════════════════════════════");
+            console.log("🚨 SADECE CRASH DIALOG KONTROL EDILECEK");
+            console.log("⏱️ Crash check: 5 saniyede bir");
+            console.log("👁️ Foreground check: 30 dakikada bir");
+            console.log("═════════════════════════════════════════");
         }
         
         /**
@@ -447,10 +384,10 @@
                 } catch (e) {}
             }
             
-            if (foregroundCheckThread) {
+            if (foregroundCheckTimer) {
                 try {
-                    foregroundCheckThread.interrupt();
-                    foregroundCheckThread = null;
+                    clearInterval(foregroundCheckTimer);
+                    foregroundCheckTimer = null;
                 } catch (e) {}
             }
             
@@ -464,14 +401,28 @@
             return restartApp();
         }
         
+        /**
+         * Status check
+         */
+        function getStatus() {
+            return {
+                isRunning: isMonitoring,
+                package: targetPackage,
+                checkInterval: checkInterval + "ms",
+                foregroundCheckInterval: foregroundCheckInterval + "ms (30 min)",
+                isForeground: isAppForeground()
+            };
+        }
+        
         return {
             start: start,
             stop: stop,
-            forceRestart: forceRestart
+            forceRestart: forceRestart,
+            getStatus: getStatus
         };
         
     })();
     
     module.exports = SimpleCrashHandler;
     
-    })();
+})();
